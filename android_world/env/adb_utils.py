@@ -119,7 +119,7 @@ _PATTERN_TO_ACTIVITY = immutabledict.immutabledict({
     'reddit': 'com.reddit.frontpage/com.reddit.frontpage.MainActivity',
     'pinterest': 'com.pinterest/com.pinterest.activity.PinterestActivity',
     'android world': 'com.example.androidworld/.MainActivity',
-    'files': (
+    'files|file manager': (
         'com.google.android.documentsui/com.android.documentsui.files.FilesActivity'
     ),
     'markor': 'net.gsantner.markor/net.gsantner.markor.activity.MainActivity',
@@ -1388,7 +1388,10 @@ def text_emulator(
     message: str,
     timeout_sec: float = _DEFAULT_TIMEOUT_SECS,
 ) -> adb_pb2.AdbResponse:
-  """Simulate an incoming text message in an emulator using ADB.
+  """Simulate an incoming text message by writing directly to the SMS database.
+
+  Uses direct SQLite insertion instead of 'emu sms send' because the emulator
+  modem/RIL stack may not be functional in containerized environments.
 
   Args:
     env: The Android environment interface.
@@ -1399,16 +1402,49 @@ def text_emulator(
   Returns:
     A response object containing the ADB operation result.
   """
-  escaped_phone_number = re.sub(r'[^0-9+]', '', phone_number)
-  adb_args = [
-      'emu',
-      'sms',
-      'send',
-      f'{escaped_phone_number}',
-      f'{message}',
-  ]
-  response = issue_generic_request(adb_args, env, timeout_sec)
-  return response
+  db = '/data/data/com.android.providers.telephony/databases/mmssms.db'
+  escaped_number = re.sub(r"'", "''", re.sub(r'[^0-9+]', '', phone_number))
+  escaped_message = message.replace("'", "''")
+
+  now_response = issue_generic_request(['shell', 'date', '+%s%3N'], env, timeout_sec)
+  now_ms = now_response.generic.output.decode().strip()
+
+  execute_sql_command(
+      db,
+      f"INSERT OR IGNORE INTO canonical_addresses (address) VALUES ('{escaped_number}')",
+      env,
+  )
+  addr_response = execute_sql_command(
+      db,
+      f"SELECT _id FROM canonical_addresses WHERE address='{escaped_number}'",
+      env,
+  )
+  addr_id = addr_response.generic.output.decode().strip()
+
+  thread_response = execute_sql_command(
+      db,
+      f"SELECT _id FROM threads WHERE recipient_ids='{addr_id}'",
+      env,
+  )
+  thread_id = thread_response.generic.output.decode().strip()
+  if not thread_id:
+    execute_sql_command(
+        db,
+        f"INSERT INTO threads (date, recipient_ids, snippet, read) VALUES ({now_ms}, '{addr_id}', '{escaped_message}', 0)",
+        env,
+    )
+    thread_response = execute_sql_command(
+        db,
+        f"SELECT _id FROM threads WHERE recipient_ids='{addr_id}'",
+        env,
+    )
+    thread_id = thread_response.generic.output.decode().strip()
+
+  return execute_sql_command(
+      db,
+      f"INSERT INTO sms (thread_id, address, date, body, type, read) VALUES ({thread_id}, '{escaped_number}', {now_ms}, '{escaped_message}', 1, 0)",
+      env,
+  )
 
 
 def set_default_app(

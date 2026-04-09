@@ -57,7 +57,7 @@ def _has_wrapper(
 
 def get_a11y_tree(
     env: env_interface.AndroidEnvInterface,
-    max_retries: int = 5,
+    max_retries: int = 3,
     sleep_duration: float = 1.0,
 ) -> android_accessibility_forest_pb2.AndroidAccessibilityForest:
   """Gets a11y tree.
@@ -101,6 +101,11 @@ def get_a11y_tree(
   if forest is None:
     raise RuntimeError('Could not get a11y tree.')
   return forest
+
+
+class A11yTreeUnavailableError(RuntimeError):
+  """Raised when a11y tree is permanently unavailable after retries."""
+  pass
 
 
 _TASK_PATH = file_utils.convert_to_posix_path(
@@ -216,21 +221,32 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
     """Returns the most recent a11y forest from the device."""
     try:
       return self._get_a11y_forest()
-    except RuntimeError:
-      print(
-          'Could not get a11y tree. Reconnecting to Android, reinitializing'
-          ' AndroidEnv, and restarting a11y forwarding.'
-      )
-      self.refresh_env()
-      return self._get_a11y_forest()
+    # except RuntimeError:
+    #   print(
+    #       'Could not get a11y tree. Reconnecting to Android, reinitializing'
+    #       ' AndroidEnv, and restarting a11y forwarding.'
+    #   )
+    #   self.refresh_env()
+    #   try:
+    #     return self._get_a11y_forest()
+    except RuntimeError as e:
+      raise A11yTreeUnavailableError('Could not get a11y tree after reconnect.') from e
 
   def get_ui_elements(self) -> list[representation_utils.UIElement]:
     """Returns the most recent UI elements from the device."""
     if self._a11y_method == A11yMethod.A11Y_FORWARDER_APP:
-      return representation_utils.forest_to_ui_elements(
-          self.get_a11y_forest(),
-          exclude_invisible_elements=True,
-      )
+      try:
+        return representation_utils.forest_to_ui_elements(
+            self.get_a11y_forest(),
+            exclude_invisible_elements=True,
+        )
+      except A11yTreeUnavailableError:
+        # When A11Y_FORWARDER_APP is unavailable, switch to UIAUTOMATOR 
+        self._a11y_method = A11yMethod.UIAUTOMATOR
+        logging.warning('a11y tree unavailable, falling back to UIAUTOMATOR.')
+        return representation_utils.xml_dump_to_ui_elements(
+            adb_utils.uiautomator_dump(self._env)
+        )
     elif self._a11y_method == A11yMethod.UIAUTOMATOR:
       return representation_utils.xml_dump_to_ui_elements(
           adb_utils.uiautomator_dump(self._env)
@@ -240,14 +256,23 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
 
   def _process_timestep(self, timestep: dm_env.TimeStep) -> dm_env.TimeStep:
     """Adds a11y tree info to the observation."""
+    forest = None
     if self._a11y_method == A11yMethod.A11Y_FORWARDER_APP:
-      forest = self.get_a11y_forest()
-      ui_elements = representation_utils.forest_to_ui_elements(
-          forest,
-          exclude_invisible_elements=True,
-      )
+      try:
+        forest = self.get_a11y_forest()
+        ui_elements = representation_utils.forest_to_ui_elements(
+            forest, exclude_invisible_elements=True
+        )
+      except A11yTreeUnavailableError:
+        # When A11Y_FORWARDER_APP is unavailable, switch to UIAUTOMATOR 
+        self._a11y_method = A11yMethod.UIAUTOMATOR
+        logging.warning(
+            'a11y tree unavailable in _process_timestep, falling back to UIAUTOMATOR.'
+        )
+        ui_elements = representation_utils.xml_dump_to_ui_elements(
+            adb_utils.uiautomator_dump(self._env)
+        )
     else:
-      forest = None
       ui_elements = self.get_ui_elements()
     timestep.observation[OBSERVATION_KEY_FOREST] = forest
     timestep.observation[OBSERVATION_KEY_UI_ELEMENTS] = ui_elements

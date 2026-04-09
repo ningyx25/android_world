@@ -38,6 +38,13 @@ function check_hardware_acceleration() {
 hw_accel_flag=$(check_hardware_acceleration)
 
 function launch_emulator () {
+  # Generate adb keys if not present to avoid unauthorized error
+  if [ ! -f "$HOME/.android/adbkey" ]; then
+    mkdir -p "$HOME/.android"
+    adb keygen "$HOME/.android/adbkey"
+  fi
+  adb kill-server
+  adb start-server
   adb devices | grep emulator | cut -f1 | xargs -I {} adb -s "{}" emu kill
   # options="@${emulator_name} -no-window -no-snapshot -noaudio -no-boot-anim -memory 2048 ${hw_accel_flag} -camera-back none  -grpc 8554"
   options="@${emulator_name} -no-window -no-snapshot -no-boot-anim -memory 2048 ${hw_accel_flag} -grpc 8554"
@@ -57,6 +64,16 @@ function launch_emulator () {
 }
 
 
+function get_emulator_serial() {
+  # Wait until an emulator appears with authorized 'device' status
+  local serial=""
+  while [ -z "$serial" ]; do
+    serial=$(adb devices | grep emulator | grep -w 'device' | head -1 | cut -f1)
+    [ -z "$serial" ] && sleep 2
+  done
+  echo "$serial"
+}
+
 function check_emulator_status () {
   printf "${G}==> ${BL}Checking emulator booting up status 🧐${NC}\n"
   start_time=$(date +%s)
@@ -66,12 +83,13 @@ function check_emulator_status () {
   timeout=${EMULATOR_TIMEOUT:-300}
 
   while true; do
-    result=$(adb shell getprop sys.boot_completed 2>&1)
+    serial=$(get_emulator_serial)
+    result=$(adb -s "$serial" shell getprop sys.boot_completed 2>&1)
 
     if [ "$result" == "1" ]; then
       printf "\e[K${G}==> \u2713 Emulator is ready : '$result'           ${NC}\n"
       adb devices -l
-      adb shell input keyevent 82
+      adb -s "$serial" shell input keyevent 82
       return 0  # Return a 0 to indicate emulator has booted successfully
     elif [ "$result" == "" ]; then
       printf "${YE}==> Emulator is partially Booted! 😕 ${spinner[$i]} ${NC}\r"
@@ -92,13 +110,15 @@ function check_emulator_status () {
 
 
 function disable_animation() {
-  adb shell "settings put global window_animation_scale 0.0"
-  adb shell "settings put global transition_animation_scale 0.0"
-  adb shell "settings put global animator_duration_scale 0.0"
+  serial=$(get_emulator_serial)
+  adb -s "$serial" shell "settings put global window_animation_scale 0.0"
+  adb -s "$serial" shell "settings put global transition_animation_scale 0.0"
+  adb -s "$serial" shell "settings put global animator_duration_scale 0.0"
 };
 
 function hidden_policy() {
-  adb shell "settings put global hidden_api_policy_pre_p_apps 1;settings put global hidden_api_policy_p_apps 1;settings put global hidden_api_policy 1"
+  serial=$(get_emulator_serial)
+  adb -s "$serial" shell "settings put global hidden_api_policy_pre_p_apps 1;settings put global hidden_api_policy_p_apps 1;settings put global hidden_api_policy 1"
 };
 
 launch_emulator

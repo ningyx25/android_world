@@ -29,6 +29,7 @@ KEYBOARD_ENTER = 'keyboard_enter'
 LONG_PRESS = 'long_press'
 NAVIGATE_BACK = 'navigate_back'
 NAVIGATE_HOME = 'navigate_home'
+DRAG_AND_DROP = 'drag_and_drop'
 OPEN_APP = 'open_app'
 SCROLL = 'scroll'
 STATUS = 'status'
@@ -45,6 +46,7 @@ _ACTION_TYPES = (
     NAVIGATE_HOME,
     NAVIGATE_BACK,
     KEYBOARD_ENTER,
+    DRAG_AND_DROP,
     OPEN_APP,
     STATUS,
     WAIT,
@@ -60,6 +62,8 @@ ACTION_TYPE = 'action_type'
 INDEX = 'index'
 X = 'x'
 Y = 'y'
+TOUCH_XY = 'touch_xy'
+LIFT_XY = 'lift_xy'
 TEXT = 'text'
 DIRECTION = 'direction'
 APP_NAME = 'app_name'
@@ -70,6 +74,8 @@ ACTION_KEYS = [
     INDEX,
     X,
     Y,
+    TOUCH_XY,
+    LIFT_XY,
     TEXT,
     DIRECTION,
     APP_NAME,
@@ -107,6 +113,8 @@ class JSONAction:
   index: Optional[str | int] = None
   x: Optional[int] = None
   y: Optional[int] = None
+  touch_xy: Optional[list[int]] = None
+  lift_xy: Optional[list[int]] = None
   text: Optional[str] = None
   direction: Optional[str] = None
   goal_status: Optional[str] = None
@@ -121,6 +129,9 @@ class JSONAction:
       self.index = int(self.index)
       if self.x is not None or self.y is not None:
         raise ValueError('Either an index or a <x, y> should be provided.')
+    if self.touch_xy is not None and self.lift_xy is not None:
+      if len(self.touch_xy) != 2 or len(self.lift_xy) != 2:
+        raise ValueError('touch_xy and lift_xy must be lists of length 2.')
     if self.direction and self.direction not in _SCROLL_DIRECTIONS:
       raise ValueError(f'Invalid scroll direction: {self.direction}')
     if self.text is not None and not isinstance(self.text, str):
