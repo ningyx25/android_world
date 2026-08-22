@@ -1805,12 +1805,41 @@ def set_root_if_needed(
   return issue_generic_request(['root'], env, timeout_sec)
 
 
-def uiautomator_dump(env, timeout_sec: Optional[float] = 30) -> str:
-  """Issues a uiautomator dump request and returns the UI hierarchy."""
-  dump_args = 'shell uiautomator dump /sdcard/window_dump.xml'
-  issue_generic_request(dump_args, env, timeout_sec=timeout_sec)
+def uiautomator_dump(
+    env, timeout_sec: Optional[float] = 30, max_attempts: int = 3
+) -> str:
+  """Issues a uiautomator dump request and returns the UI hierarchy.
 
-  read_args = 'shell cat /sdcard/window_dump.xml'
-  response = issue_generic_request(read_args, env, timeout_sec=timeout_sec)
-
-  return response.generic.output.decode('utf-8')
+  `uiautomator dump` intermittently exits without writing the dump file when
+  the device UI is busy (animations, app transitions), so this verifies that
+  a fresh dump was actually produced before reading it back, retrying with a
+  short backoff otherwise.
+  """
+  dump_path = '/sdcard/window_dump.xml'
+  last_error: Optional[str] = None
+  for attempt in range(1, max_attempts + 1):
+    try:
+      # Remove any stale dump first so a failed dump can't masquerade as a
+      # successful one by returning an outdated UI hierarchy.
+      issue_generic_request(
+          ['shell', 'rm', '-f', dump_path], env, timeout_sec=timeout_sec
+      )
+      dump_args = f'shell uiautomator dump {dump_path}'
+      issue_generic_request(dump_args, env, timeout_sec=timeout_sec)
+      read_args = f'shell cat {dump_path}'
+      response = issue_generic_request(read_args, env, timeout_sec=timeout_sec)
+      content = response.generic.output.decode('utf-8')
+      if content.strip():
+        return content
+      last_error = 'empty uiautomator dump'
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      last_error = str(e)
+    logging.warning(
+        'uiautomator_dump attempt %d/%d failed: %s',
+        attempt, max_attempts, last_error,
+    )
+    time.sleep(min(1.0 * attempt, 3.0))
+  raise RuntimeError(
+      f'uiautomator dump failed after {max_attempts} attempts;'
+      f' last error: {last_error}'
+  )

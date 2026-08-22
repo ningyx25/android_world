@@ -208,10 +208,16 @@ class ContactsNewContactDraft(task_eval.TaskEval):
       env: interface.AsyncEnv,
   ) -> float:
     super().is_successful(env)
-    ui_elements = representation_utils.forest_to_ui_elements(
-        env.get_state().forest,
-        exclude_invisible_elements=False,
-    )
+    state = env.get_state()
+    if state.forest is not None:
+      ui_elements = representation_utils.forest_to_ui_elements(
+          state.forest,
+          exclude_invisible_elements=False,
+      )
+    else:
+      # When the controller is serving UI elements via the uiautomator fallback
+      # there is no accessibility forest; use the parsed xml-dump elements.
+      ui_elements = state.ui_elements
     return (
         1.0
         if _contact_info_is_entered(

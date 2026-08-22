@@ -132,7 +132,14 @@ class JSONAction:
     if self.touch_xy is not None and self.lift_xy is not None:
       if len(self.touch_xy) != 2 or len(self.lift_xy) != 2:
         raise ValueError('touch_xy and lift_xy must be lists of length 2.')
-    if self.direction and self.direction not in _SCROLL_DIRECTIONS:
+    if (
+        self.direction
+        and self.action_type != SWIPE
+        and self.direction not in _SCROLL_DIRECTIONS
+    ):
+      # SWIPE actions may carry a [x1, y1, x2, y2] coordinate list in
+      # `direction` (see actuation.execute_adb_action), so only scroll-type
+      # directions are validated for the other action types.
       raise ValueError(f'Invalid scroll direction: {self.direction}')
     if self.text is not None and not isinstance(self.text, str):
       self.text = str(self.text)

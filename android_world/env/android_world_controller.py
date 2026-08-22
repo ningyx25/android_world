@@ -164,6 +164,10 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
   element.
   """
 
+  # Number of consecutive a11y-forwarder failures before attempting to
+  # re-bind the accessibility forwarder service on the device.
+  _A11Y_FAILURES_BEFORE_REBIND = 3
+
   def __init__(
       self,
       env: env_interface.AndroidEnvInterface,
@@ -179,6 +183,7 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
     else:
       self._env = env
     self._a11y_method = a11y_method
+    self._a11y_failure_count = 0
 
   @property
   def device_screen_size(self) -> tuple[int, int]:
@@ -232,18 +237,53 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
     except RuntimeError as e:
       raise A11yTreeUnavailableError('Could not get a11y tree after reconnect.') from e
 
+  def _try_rebind_a11y_forwarder(self) -> None:
+    """Best-effort re-bind of the accessibility forwarder service.
+
+    The forwarder service occasionally gets unbound on the device (no a11y
+    events are delivered, so the gRPC wrapper never yields a tree). Re-setting
+    the enabled-services setting usually restores it without a container
+    restart.
+    """
+    service = (
+        'com.google.androidenv.accessibilityforwarder/'
+        'com.google.androidenv.accessibilityforwarder.AccessibilityForwarder'
+    )
+    try:
+      adb_utils.issue_generic_request(
+          ['shell', 'settings', 'put', 'secure',
+           'enabled_accessibility_services', service],
+          self._env,
+      )
+      adb_utils.issue_generic_request(
+          ['shell', 'settings', 'put', 'secure', 'accessibility_enabled', '1'],
+          self._env,
+      )
+      time.sleep(2.0)
+      logging.warning('Attempted to re-bind a11y forwarder service.')
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      logging.warning('a11y forwarder re-bind attempt failed: %s', e)
+
   def get_ui_elements(self) -> list[representation_utils.UIElement]:
     """Returns the most recent UI elements from the device."""
     if self._a11y_method == A11yMethod.A11Y_FORWARDER_APP:
       try:
-        return representation_utils.forest_to_ui_elements(
+        elements = representation_utils.forest_to_ui_elements(
             self.get_a11y_forest(),
             exclude_invisible_elements=True,
         )
+        self._a11y_failure_count = 0
+        return elements
       except A11yTreeUnavailableError:
-        # When A11Y_FORWARDER_APP is unavailable, switch to UIAUTOMATOR 
-        self._a11y_method = A11yMethod.UIAUTOMATOR
-        logging.warning('a11y tree unavailable, falling back to UIAUTOMATOR.')
+        # Fall back to UIAUTOMATOR for THIS call only; keep preferring the
+        # forwarder app on subsequent calls so the system can recover.
+        self._a11y_failure_count += 1
+        logging.warning(
+            'a11y tree unavailable (failure %d), falling back to UIAUTOMATOR'
+            ' for this call.', self._a11y_failure_count,
+        )
+        if self._a11y_failure_count % self._A11Y_FAILURES_BEFORE_REBIND == 0:
+          self._try_rebind_a11y_forwarder()
         return representation_utils.xml_dump_to_ui_elements(
             adb_utils.uiautomator_dump(self._env)
         )
@@ -263,12 +303,17 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
         ui_elements = representation_utils.forest_to_ui_elements(
             forest, exclude_invisible_elements=True
         )
+        self._a11y_failure_count = 0
       except A11yTreeUnavailableError:
-        # When A11Y_FORWARDER_APP is unavailable, switch to UIAUTOMATOR 
-        self._a11y_method = A11yMethod.UIAUTOMATOR
+        # Fall back to UIAUTOMATOR for THIS call only; keep preferring the
+        # forwarder app on subsequent calls so the system can recover.
+        self._a11y_failure_count += 1
         logging.warning(
-            'a11y tree unavailable in _process_timestep, falling back to UIAUTOMATOR.'
+            'a11y tree unavailable in _process_timestep (failure %d), falling'
+            ' back to UIAUTOMATOR for this call.', self._a11y_failure_count,
         )
+        if self._a11y_failure_count % self._A11Y_FAILURES_BEFORE_REBIND == 0:
+          self._try_rebind_a11y_forwarder()
         ui_elements = representation_utils.xml_dump_to_ui_elements(
             adb_utils.uiautomator_dump(self._env)
         )

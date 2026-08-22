@@ -84,6 +84,25 @@ async def lifespan(fast_api_app: fastapi.FastAPI):
 
 
 app = fastapi.FastAPI(lifespan=lifespan)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: fastapi.Request, exc: Exception):
+  """Returns 500 with a short exception summary instead of a bare body.
+
+  The full traceback is still logged server-side; the summary lets HTTP
+  clients (e.g. the eval runner) see the root cause without reading container
+  logs.
+  """
+  logger.exception(
+      "Unhandled error on %s %s", request.method, request.url.path
+  )
+  return fastapi.responses.JSONResponse(
+      status_code=500,
+      content={"detail": f"{type(exc).__name__}: {exc}"},
+  )
+
+
 suite_router = fastapi.APIRouter(prefix="/suite", tags=["suite"])
 task_router = fastapi.APIRouter(prefix="/task", tags=["task"])
 miniwob_router = fastapi.APIRouter(prefix="/miniwob", tags=["miniwob"])
