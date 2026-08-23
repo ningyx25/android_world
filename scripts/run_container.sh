@@ -19,6 +19,8 @@ fi
 docker run -d --init --privileged \
   --name "${NAME}" \
   -p "${PORT}:5000" \
+  --restart unless-stopped \
+  --memory 6g --memory-swap 6g \
   android_world:latest
 
 echo "Container ${NAME} started; environment will be ready at"

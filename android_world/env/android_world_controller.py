@@ -16,6 +16,7 @@
 
 import contextlib
 import enum
+import hashlib
 import io
 import os
 import time
@@ -265,6 +266,48 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
       logging.warning('adb screencap fallback failed: %s', e)
     raise RuntimeError('all screenshot sources failed')
 
+  # Stabilized-screenshot sampling parameters (see get_stable_pixels).
+  _STABLE_PIXEL_ATTEMPTS = 6
+  _STABLE_PIXEL_INTERVAL_SEC = 1.0
+
+  def get_stable_pixels(
+      self,
+      max_attempts: int = _STABLE_PIXEL_ATTEMPTS,
+      interval_sec: float = _STABLE_PIXEL_INTERVAL_SEC,
+  ) -> np.ndarray:
+    """Waits for the screen pixels to settle; a11y/uiautomator-free.
+
+    Repeatedly captures pixels via get_pixels() (which never touches the
+    a11y forwarding chain) and returns as soon as two consecutive captures
+    are byte-identical. Video playback or looping animations never
+    converge; on exhaustion the LAST capture is returned instead of
+    failing -- a possibly-moving screenshot still beats a 500 (the old
+    get_state-based stabilization path hard-failed exactly here, e.g. with
+    VLC playing in the foreground).
+
+    Args:
+      max_attempts: Maximum number of captures (worst-case wall time is
+        roughly max_attempts * (capture_time + interval_sec)).
+      interval_sec: Sleep between captures.
+
+    Returns:
+      The most recent capture (stable if one was observed).
+
+    Raises:
+      RuntimeError: if even a single capture cannot be obtained (e.g. the
+        emulator process is dead) -- there are no pixels to return.
+    """
+    prev_hash = None
+    pixels = self.get_pixels()  # First capture outside the loop: fail fast.
+    for _ in range(max_attempts - 1):
+      new_hash = hashlib.md5(pixels.tobytes()).hexdigest()
+      if new_hash == prev_hash:
+        return pixels  # Two consecutive identical frames -> stable.
+      prev_hash = new_hash
+      time.sleep(interval_sec)
+      pixels = self.get_pixels()
+    return pixels  # Never stabilized; return the latest frame anyway.
+
   def _get_a11y_forest(
       self,
   ) -> android_accessibility_forest_pb2.AndroidAccessibilityForest:
@@ -292,6 +335,83 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
       'com.google.androidenv.accessibilityforwarder.AccessibilityForwarder'
   )
 
+  # The emulator's default virtual access-point SSID. Used by the wifi
+  # self-heal ladder when an explicit reconnect is required. Overridable
+  # via the AW_RECOVERY_WIFI_SSID environment variable.
+  _WIFI_SSID = os.environ.get('AW_RECOVERY_WIFI_SSID', 'AndroidWifi')
+
+  def _wlan0_routes_empty(self) -> bool:
+    """Returns True if the device's wlan0 routing table has no entries.
+
+    When the framework-level wifi breaks, app traffic has no route to the
+    host (10.0.2.2), so the a11y forwarder can never reach the wrapper's
+    gRPC server even though the service itself is healthy.
+    """
+    try:
+      response = adb_utils.issue_generic_request(
+          ['shell', 'ip', 'route', 'show', 'table', 'wlan0'], self._env,
+      )
+      routes = response.generic.output.decode('utf-8', errors='replace')
+      return not routes.strip()
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      logging.warning('wlan0 route check failed: %s', e)
+      return True  # Assume broken; the repair attempts are cheap to skip.
+
+  def _restore_device_network(self) -> None:
+    """Escalating wifi recovery ladder with verification at each step.
+
+    A bare `svc wifi disable/enable` toggle does NOT recover from every
+    breakage: if the framework has blacklisted the SSID (logcat shows
+    "Ignoring network selection disabled SSID: AndroidWifi"), wlan0 stays
+    NO-CARRIER after the toggle. In that state an explicit
+    `cmd wifi connect-network` is required (verified live, 2026-08-23).
+    """
+    try:
+      if not self._wlan0_routes_empty():
+        return
+      logging.warning(
+          'wlan0 routing table empty; toggling framework wifi.'
+      )
+      adb_utils.issue_generic_request(
+          ['shell', 'svc', 'wifi', 'disable'], self._env,
+      )
+      time.sleep(3.0)
+      adb_utils.issue_generic_request(
+          ['shell', 'svc', 'wifi', 'enable'], self._env,
+      )
+      time.sleep(8.0)
+      if not self._wlan0_routes_empty():
+        return
+      # The toggle did not restore routes (SSID likely blacklisted).
+      # Explicitly reconnect to the emulator's virtual access point.
+      logging.warning(
+          'svc wifi toggle did not restore wlan0 routes; reconnecting'
+          ' explicitly to SSID %s.',
+          self._WIFI_SSID,
+      )
+      adb_utils.issue_generic_request(
+          [
+              'shell',
+              'cmd',
+              'wifi',
+              'connect-network',
+              self._WIFI_SSID,
+              'open',
+          ],
+          self._env,
+      )
+      # Poll briefly for DHCP/route re-provisioning.
+      for _ in range(3):
+        time.sleep(3.0)
+        if not self._wlan0_routes_empty():
+          return
+      logging.warning(
+          'wlan0 routes still empty after connect-network; device network'
+          ' may require container restart.'
+      )
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      logging.warning('wifi route check/repair failed: %s', e)
+
   def _try_rebind_a11y_forwarder(self) -> None:
     """Best-effort full recovery of a dead a11y forwarding chain.
 
@@ -300,7 +420,10 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
     repaired:
       1. The emulator's framework-level wifi can lose its routing table, so
          the device has no route to the host (10.0.2.2) and the forwarder
-         can never reach the wrapper's gRPC server.
+         can never reach the wrapper's gRPC server. Repair is a verified
+         escalation ladder (see _restore_device_network): svc-wifi toggle,
+         then explicit `cmd wifi connect-network` if the SSID was
+         blacklisted.
       2. After the forwarder app crashes, Android parks it in "Crashed
          services" and does not re-bind it. Re-writing the *same* settings
          value does not trigger the settings observer -- the value must
@@ -312,23 +435,7 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
     try:
       # 1) Restore the device->host network if the wlan0 routing table is
       #    empty (the framework re-provisions it on wifi re-enable).
-      try:
-        response = adb_utils.issue_generic_request(
-            ['shell', 'ip', 'route', 'show', 'table', 'wlan0'], self._env,
-        )
-        routes = response.generic.output.decode('utf-8', errors='replace')
-        if not routes.strip():
-          logging.warning('wlan0 routing table empty; toggling framework wifi.')
-          adb_utils.issue_generic_request(
-              ['shell', 'svc', 'wifi', 'disable'], self._env,
-          )
-          time.sleep(3.0)
-          adb_utils.issue_generic_request(
-              ['shell', 'svc', 'wifi', 'enable'], self._env,
-          )
-          time.sleep(8.0)
-      except Exception as e:  # pylint: disable=broad-exception-caught
-        logging.warning('wifi route check/repair failed: %s', e)
+      self._restore_device_network()
 
       # 2) Force a real settings change so the framework re-binds the
       #    crashed/unbound service.

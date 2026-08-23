@@ -22,6 +22,7 @@ import base64
 import contextlib
 import io
 import logging
+import subprocess
 import time
 import typing
 from typing import Any, Optional
@@ -62,11 +63,13 @@ class SendIntentRequest(pydantic.BaseModel):
 @contextlib.asynccontextmanager
 async def lifespan(fast_api_app: fastapi.FastAPI):
   """Manages the lifecycle of the Android environment and task suite."""
+  adb_path = "/opt/android/platform-tools/adb"
+  fast_api_app.state.adb_path = adb_path
   fast_api_app.state.app_android_env = env_launcher.load_and_setup_env(
       console_port=5554,
       emulator_setup=True,
       freeze_datetime=True,
-      adb_path="/opt/android/platform-tools/adb",
+      adb_path=adb_path,
   )
   task_registry = aw_registry_module.TaskRegistry()
   aw_registry = task_registry.get_registry(task_registry.ANDROID_WORLD_FAMILY)
@@ -154,8 +157,15 @@ async def reset(go_home: bool, app_android_env: AndroidEnv):
 async def get_screenshot(wait_to_stabilize: bool, app_android_env: AndroidEnv):
   """Captures and returns the current screenshot of the Android environment."""
   if wait_to_stabilize:
-    # Stability detection compares UI elements, so the full state is needed.
-    pixels = app_android_env.get_state(wait_to_stabilize=True).pixels
+    # Pixel-level stabilization: waits for two consecutive identical
+    # captures WITHOUT touching the (fragile) a11y/uiautomator chain, so a
+    # broken UI-tree pipeline can no longer fail a stabilized screenshot.
+    # Falls back to the full state only if the pixel path itself fails.
+    try:
+      pixels = app_android_env.controller.get_stable_pixels()
+    except Exception:
+      logger.exception("get_stable_pixels failed; falling back to get_state")
+      pixels = app_android_env.get_state(wait_to_stabilize=True).pixels
   else:
     # Pixels-only fast path: never touches the (fragile) a11y/uiautomator
     # chain, so a broken UI-tree pipeline cannot fail a screenshot. Falls
@@ -305,13 +315,60 @@ async def close(app_android_env: AndroidEnv):
 
 
 @app.get("/health")
-async def health(app_android_env: AndroidEnv):
-  """Checks the health of the Android environment server."""
-  if isinstance(app_android_env, interface.AsyncEnv):
-    return {"status": "success"}
-  raise fastapi.HTTPException(
-      status_code=500, detail="Environment not initialized"
+async def health(request: fastapi.Request):
+  """Deep health check: env init + QEMU process + adb device state.
+
+  The old check returned 200 as long as the AsyncEnv object existed --
+  even with a dead emulator process, which made it useless as a liveness
+  probe (see the 2026-08-23 OOM incident where /health stayed 200 while
+  every screenshot 500'd). Now verifies, cheaply:
+    1. The environment is initialized.
+    2. A QEMU emulator process is alive in this container.
+    3. adb reports emulator-5554 in 'device' (fully booted) state.
+  Returns 503 with a machine-readable reason on any failure.
+  """
+  env = getattr(request.app.state, "app_android_env", None)
+  if not isinstance(env, interface.AsyncEnv):
+    return fastapi.responses.JSONResponse(
+        status_code=503,
+        content={"status": "error", "reason": "env not initialized"},
+    )
+  # Probe 1: QEMU process alive (pgrep scans /proc; ~milliseconds).
+  try:
+    qemu_alive = (
+        subprocess.run(
+            ["pgrep", "-f", "qemu-system-x86_64-headless"],
+            capture_output=True,
+            timeout=5,
+        ).returncode
+        == 0
+    )
+  except Exception:  # pylint: disable=broad-exception-caught
+    qemu_alive = False
+  if not qemu_alive:
+    return fastapi.responses.JSONResponse(
+        status_code=503,
+        content={"status": "error", "reason": "qemu process not found"},
+    )
+  # Probe 2: emulator visible to adb in 'device' state.
+  adb_path = getattr(request.app.state, "adb_path", None) or (
+      "/opt/android/platform-tools/adb"
   )
+  try:
+    devices_out = subprocess.run(
+        [adb_path, "devices"],
+        capture_output=True,
+        timeout=5,
+    ).stdout.decode("utf-8", errors="replace")
+    device_ok = "emulator-5554\tdevice" in devices_out
+  except Exception:  # pylint: disable=broad-exception-caught
+    device_ok = False
+  if not device_ok:
+    return fastapi.responses.JSONResponse(
+        status_code=503,
+        content={"status": "error", "reason": "emulator-5554 not in device state"},
+    )
+  return {"status": "success"}
 
 
 @adb_router.post("/start_activity")

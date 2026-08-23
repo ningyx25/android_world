@@ -95,7 +95,8 @@ COPY . /
 
 RUN chmod a+x docker_setup/start_emu.sh && \
     chmod a+x docker_setup/start_emu_headless.sh && \
-    chmod a+x docker_setup/entrypoint.sh
+    chmod a+x docker_setup/entrypoint.sh && \
+    chmod a+x docker_setup/watchdog.sh
 
 #====================================
 # Install dependencies
