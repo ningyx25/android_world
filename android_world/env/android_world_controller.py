@@ -16,6 +16,7 @@
 
 import contextlib
 import enum
+import io
 import os
 import time
 from typing import Any
@@ -32,6 +33,8 @@ from android_world.env import adb_utils
 from android_world.env import representation_utils
 from android_world.utils import file_utils
 import dm_env
+import numpy as np
+from PIL import Image
 
 
 def _has_wrapper(
@@ -53,6 +56,13 @@ def _has_wrapper(
     return _has_wrapper(env._env, target_wrapper)  # pylint: disable=protected-access
   else:
     return False
+
+
+def _unwrap_to_base_env(env: env_interface.AndroidEnvInterface):
+  """Strips wrapper layers (e.g. A11yGrpcWrapper) down to the base AndroidEnv."""
+  while hasattr(env, '_env'):
+    env = env._env  # pylint: disable=protected-access
+  return env
 
 
 def get_a11y_tree(
@@ -168,6 +178,10 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
   # re-bind the accessibility forwarder service on the device.
   _A11Y_FAILURES_BEFORE_REBIND = 3
 
+  # Number of consecutive identical forests before the (silently stale)
+  # accumulated tree is considered dead and recovery is triggered.
+  _IDENTICAL_FOREST_STREAK_LIMIT = 20
+
   def __init__(
       self,
       env: env_interface.AndroidEnvInterface,
@@ -184,6 +198,8 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
       self._env = env
     self._a11y_method = a11y_method
     self._a11y_failure_count = 0
+    self._last_forest_hash = None
+    self._identical_forest_streak = 0
 
   @property
   def device_screen_size(self) -> tuple[int, int]:
@@ -215,6 +231,40 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
     # pylint: enable=protected-access
     # pytype: enable=attribute-error
 
+  def get_pixels(self) -> np.ndarray:
+    """Returns current screenshot pixels WITHOUT fetching the a11y tree.
+
+    Two independent sources are tried in order; both yield the same pixels
+    the timestep observation carries, but neither depends on the (fragile)
+    a11y forwarding chain:
+      1. The emulator's gRPC screenshot (the exact call the coordinator uses
+         to populate timestep pixels).
+      2. `adb exec-out screencap -p` (fully independent of android_env).
+
+    Raises:
+      RuntimeError: if both sources fail; callers may then fall back to the
+        full get_state() path.
+    """
+    # 1) Emulator gRPC screenshot.
+    try:
+      base_env = _unwrap_to_base_env(self._env)
+      pixels = np.asarray(
+          # pylint: disable=protected-access
+          base_env._coordinator._simulator.get_screenshot()
+      )
+      if pixels.size:
+        return pixels.astype(np.uint8)
+      raise RuntimeError('empty screenshot from emulator gRPC')
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      logging.warning('emulator gRPC screenshot failed: %s', e)
+    # 2) adb screencap, independent of android_env internals.
+    try:
+      png_bytes = adb_utils.get_screenshot_png(self._env)
+      return np.array(Image.open(io.BytesIO(png_bytes)), dtype=np.uint8)
+    except Exception as e:  # pylint: disable=broad-exception-caught
+      logging.warning('adb screencap fallback failed: %s', e)
+    raise RuntimeError('all screenshot sources failed')
+
   def _get_a11y_forest(
       self,
   ) -> android_accessibility_forest_pb2.AndroidAccessibilityForest:
@@ -237,22 +287,60 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
     except RuntimeError as e:
       raise A11yTreeUnavailableError('Could not get a11y tree after reconnect.') from e
 
-  def _try_rebind_a11y_forwarder(self) -> None:
-    """Best-effort re-bind of the accessibility forwarder service.
+  _FORWARDER_SERVICE = (
+      'com.google.androidenv.accessibilityforwarder/'
+      'com.google.androidenv.accessibilityforwarder.AccessibilityForwarder'
+  )
 
-    The forwarder service occasionally gets unbound on the device (no a11y
-    events are delivered, so the gRPC wrapper never yields a tree). Re-setting
-    the enabled-services setting usually restores it without a container
-    restart.
+  def _try_rebind_a11y_forwarder(self) -> None:
+    """Best-effort full recovery of a dead a11y forwarding chain.
+
+    The chain breaks in three independent places (see
+    DIAGNOSIS_http500_android_env.md, 2026-08-23), all of which must be
+    repaired:
+      1. The emulator's framework-level wifi can lose its routing table, so
+         the device has no route to the host (10.0.2.2) and the forwarder
+         can never reach the wrapper's gRPC server.
+      2. After the forwarder app crashes, Android parks it in "Crashed
+         services" and does not re-bind it. Re-writing the *same* settings
+         value does not trigger the settings observer -- the value must
+         actually change (write null first).
+      3. The restarted forwarder process loses the gRPC port and
+         tree-logging flags that are delivered once at wrapper setup via
+         one-shot broadcasts.
     """
-    service = (
-        'com.google.androidenv.accessibilityforwarder/'
-        'com.google.androidenv.accessibilityforwarder.AccessibilityForwarder'
-    )
     try:
+      # 1) Restore the device->host network if the wlan0 routing table is
+      #    empty (the framework re-provisions it on wifi re-enable).
+      try:
+        response = adb_utils.issue_generic_request(
+            ['shell', 'ip', 'route', 'show', 'table', 'wlan0'], self._env,
+        )
+        routes = response.generic.output.decode('utf-8', errors='replace')
+        if not routes.strip():
+          logging.warning('wlan0 routing table empty; toggling framework wifi.')
+          adb_utils.issue_generic_request(
+              ['shell', 'svc', 'wifi', 'disable'], self._env,
+          )
+          time.sleep(3.0)
+          adb_utils.issue_generic_request(
+              ['shell', 'svc', 'wifi', 'enable'], self._env,
+          )
+          time.sleep(8.0)
+      except Exception as e:  # pylint: disable=broad-exception-caught
+        logging.warning('wifi route check/repair failed: %s', e)
+
+      # 2) Force a real settings change so the framework re-binds the
+      #    crashed/unbound service.
       adb_utils.issue_generic_request(
           ['shell', 'settings', 'put', 'secure',
-           'enabled_accessibility_services', service],
+           'enabled_accessibility_services', 'null'],
+          self._env,
+      )
+      time.sleep(1.0)
+      adb_utils.issue_generic_request(
+          ['shell', 'settings', 'put', 'secure',
+           'enabled_accessibility_services', self._FORWARDER_SERVICE],
           self._env,
       )
       adb_utils.issue_generic_request(
@@ -260,9 +348,42 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
           self._env,
       )
       time.sleep(2.0)
-      logging.warning('Attempted to re-bind a11y forwarder service.')
+
+      # 3) Re-deliver the one-shot broadcasts the restarted process lost.
+      # Private android_env 1.2.3 APIs (the version is pinned in
+      # pyproject.toml); re-check on any android_env upgrade.
+      self._env._configure_grpc()  # pylint: disable=protected-access
+      self._env._enable_a11y_tree_logs()  # pylint: disable=protected-access
+      logging.warning('a11y forwarder recovery sequence completed.')
     except Exception as e:  # pylint: disable=broad-exception-caught
-      logging.warning('a11y forwarder re-bind attempt failed: %s', e)
+      logging.warning('a11y forwarder recovery attempt failed: %s', e)
+
+  def _maybe_flag_stale_forest(
+      self,
+      forest: android_accessibility_forest_pb2.AndroidAccessibilityForest,
+  ) -> None:
+    """Detects a silently stale accumulated forest.
+
+    The a11y wrapper's accumulated-extras buffer keeps returning the last
+    forest it ever received even after the forwarder app dies mid-session,
+    so an outdated tree looks exactly like success. A live screen almost
+    always has at least one changing element (e.g. the status-bar clock), so
+    many *identical* consecutive forests means the chain is dead.
+    """
+    forest_hash = hash(forest.SerializeToString())
+    if forest_hash == self._last_forest_hash:
+      self._identical_forest_streak += 1
+    else:
+      self._identical_forest_streak = 0
+      self._last_forest_hash = forest_hash
+    if self._identical_forest_streak >= self._IDENTICAL_FOREST_STREAK_LIMIT:
+      logging.warning(
+          'Identical a11y forest seen %d times in a row; the accumulated'
+          ' tree is likely stale. Running a11y recovery.',
+          self._identical_forest_streak,
+      )
+      self._identical_forest_streak = 0
+      self._try_rebind_a11y_forwarder()
 
   def get_ui_elements(self) -> list[representation_utils.UIElement]:
     """Returns the most recent UI elements from the device."""
@@ -304,6 +425,7 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
             forest, exclude_invisible_elements=True
         )
         self._a11y_failure_count = 0
+        self._maybe_flag_stale_forest(forest)
       except A11yTreeUnavailableError:
         # Fall back to UIAUTOMATOR for THIS call only; keep preferring the
         # forwarder app on subsequent calls so the system can recover.

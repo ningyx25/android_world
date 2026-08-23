@@ -153,9 +153,20 @@ async def reset(go_home: bool, app_android_env: AndroidEnv):
 @app.post("/screenshot")
 async def get_screenshot(wait_to_stabilize: bool, app_android_env: AndroidEnv):
   """Captures and returns the current screenshot of the Android environment."""
-  state = app_android_env.get_state(wait_to_stabilize=wait_to_stabilize)
+  if wait_to_stabilize:
+    # Stability detection compares UI elements, so the full state is needed.
+    pixels = app_android_env.get_state(wait_to_stabilize=True).pixels
+  else:
+    # Pixels-only fast path: never touches the (fragile) a11y/uiautomator
+    # chain, so a broken UI-tree pipeline cannot fail a screenshot. Falls
+    # back to the full state only if both independent pixel sources fail.
+    try:
+      pixels = app_android_env.controller.get_pixels()
+    except Exception:
+      logger.exception("get_pixels failed; falling back to get_state")
+      pixels = app_android_env.get_state(wait_to_stabilize=False).pixels
   buf = io.BytesIO()
-  Image.fromarray(state.pixels).save(buf, format='JPEG', quality=85)
+  Image.fromarray(pixels).save(buf, format='JPEG', quality=85)
   return {"image_b64": base64.b64encode(buf.getvalue()).decode()}
 
 

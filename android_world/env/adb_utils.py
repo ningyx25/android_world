@@ -1843,3 +1843,35 @@ def uiautomator_dump(
       f'uiautomator dump failed after {max_attempts} attempts;'
       f' last error: {last_error}'
   )
+
+
+def get_screenshot_png(
+    env, timeout_sec: Optional[float] = 30
+) -> bytes:
+  """Captures a PNG screenshot via `adb exec-out screencap -p`.
+
+  Independent of android_env's a11y/gRPC stack; used as a fallback when the
+  emulator gRPC screenshot path is unavailable. `exec-out` (unlike `shell`)
+  does not translate LF to CRLF, so the PNG bytes arrive intact.
+
+  Args:
+    env: The environment/controller to issue the adb call through.
+    timeout_sec: Timeout for the adb call.
+
+  Returns:
+    Raw PNG bytes.
+
+  Raises:
+    RuntimeError: if the output is not a valid PNG (adb error text, empty
+      capture, etc.).
+  """
+  response = issue_generic_request(
+      ['exec-out', 'screencap', '-p'], env, timeout_sec=timeout_sec
+  )
+  png = response.generic.output or b''
+  if not png.startswith(b'\x89PNG'):
+    raise RuntimeError(
+        f'screencap returned non-PNG output ({len(png)} bytes):'
+        f' {png[:120]!r}'
+    )
+  return png
