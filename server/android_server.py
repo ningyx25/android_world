@@ -241,8 +241,36 @@ async def initialize_task(
     app_android_env: AndroidEnv,
     app_suite: AndroidSuite,
 ):
-  """Initializes a specific task in the Android environment."""
-  app_suite[task_type][task_idx].initialize_task(app_android_env)
+  """Initializes a specific task in the Android environment.
+
+  On failure the task's `initialized` flag is rolled back so that a client
+  retry re-runs the initialization instead of tripping over
+  "initialize_task() is already called" forever. (Task subclasses run their
+  device setup -- add_contact, send_sms, ... -- AFTER the base class sets
+  the flag, so a mid-setup exception used to leave the task in a
+  half-initialized limbo that every subsequent call rejected.)
+  """
+  task = app_suite[task_type][task_idx]
+  try:
+    task.initialize_task(app_android_env)
+  except Exception:
+    # Best-effort rollback so the task can be initialized again. tear_down
+    # is the sanctioned flag-reset path but also resets device state, which
+    # is too heavy to invoke from an error handler; a bare flag reset lets
+    # the retry redo setup (subclasses tolerate re-running their steps --
+    # e.g. contacts get re-added, and tear_down deletes all contacts
+    # anyway).
+    try:
+      task.initialized = False
+      logger.warning(
+          "initialize_task(%s[%d]) failed; rolled back initialized flag so"
+          " a retry can re-run setup.",
+          task_type,
+          task_idx,
+      )
+    except Exception:  # pylint: disable=broad-exception-caught
+      logger.exception("Failed to roll back initialized flag.")
+    raise
   return {
       "status": "success",
       "message": f"Task {task_type} {task_idx} initialized.",

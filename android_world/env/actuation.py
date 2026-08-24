@@ -238,10 +238,15 @@ def find_and_click_element(
     case_sensitive: Whether to use case sensitivity when determining which UI
       element to tap.
   """
-  # Find text.
-  action = _wait_and_find_click_element(element_text, env, case_sensitive)
+  # Find text. The matched element's index refers to the SAME ui_elements
+  # snapshot the matcher used -- re-fetching the tree here (as this used to
+  # do) can race the screen/a11y tree and produce an out-of-range index
+  # (e.g. "Invalid element index: 1, must be between 0 and -1" when the
+  # second fetch comes back empty).
+  action, ui_elements = _wait_and_find_click_element(
+      element_text, env, case_sensitive
+  )
 
-  ui_elements = env.get_ui_elements()
   screen_size = (0, 0)  # Unused, but required.
   execute_adb_action(action, ui_elements, screen_size, env)
 
@@ -251,8 +256,12 @@ def _wait_and_find_click_element(
     env: android_world_controller.AndroidWorldController,
     case_sensitive: bool,
     dist_threshold: int = 1,  # Allow one character difference.
-) -> json_action.JSONAction:
-  """Wait for the screen to update until "element_text" appears."""
+) -> tuple[json_action.JSONAction, list[representation_utils.UIElement]]:
+  """Waits for the screen to update until "element_text" appears.
+
+  Returns the click action AND the ui_elements snapshot the matched index
+  refers to, so the caller can execute against the exact same list.
+  """
   ui_elements = env.get_ui_elements()
   element, distance = _find_target_element(
       ui_elements, target_text, case_sensitive
@@ -261,7 +270,10 @@ def _wait_and_find_click_element(
   current = time.time()
   while current - start < 10:
     if distance <= dist_threshold:
-      return json_action.JSONAction(action_type='click', index=element)
+      return (
+          json_action.JSONAction(action_type='click', index=element),
+          ui_elements,
+      )
     ui_elements = env.get_ui_elements()
     element, distance = _find_target_element(
         ui_elements, target_text, case_sensitive
