@@ -41,8 +41,30 @@ dev = [
     "pytest",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
+# NOTE: Do NOT use automatic package discovery here.
+# The Dockerfile does `WORKDIR /` + `COPY . /`, so the project root inside the
+# image is `/`. Automatic discovery makes setuptools os.walk() the ENTIRE
+# container filesystem (with followlinks=True), which recurses infinitely into
+# `/proc/self/task/*/cwd` (a procfs symlink pointing back to `/`) and the build
+# hangs at 100% CPU forever. List the packages explicitly instead.
+[tool.setuptools]
+packages = [
+    "android_world",
+    "android_world.agents",
+    "android_world.env",
+    "android_world.env.setup_device",
+    "android_world.task_evals",
+    "android_world.task_evals.common_validators",
+    "android_world.task_evals.composite",
+    "android_world.task_evals.information_retrieval",
+    "android_world.task_evals.information_retrieval.proto",
+    "android_world.task_evals.miniwob",
+    "android_world.task_evals.robustness_study",
+    "android_world.task_evals.single",
+    "android_world.task_evals.single.calendar",
+    "android_world.task_evals.utils",
+    "android_world.utils",
+]
 
 [tool.setuptools.package-data]
 "*" = ["*.json", "*.proto", "*.textproto", "*.xml", "res/xml/*.xml"]

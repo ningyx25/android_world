@@ -71,6 +71,20 @@ class _BuildPy(build_py.build_py):
 _GRPCIO_TOOLS_VERSION = '1.71.0'
 _PROTOBUF_VERSION = '5.29.5'
 
+# NOTE: Do NOT call `setuptools.find_packages()` without a `where` argument.
+# Inside the Docker image the project is copied to `/` (`WORKDIR /` +
+# `COPY . /`), so the implicit `where="."` resolves to `/` and setuptools
+# os.walk()s the ENTIRE container filesystem with followlinks=True, recursing
+# infinitely into `/proc/self/task/*/cwd` (a procfs symlink pointing back to
+# `/`). Scope the search to the package directory only.
+# `find_packages()` returns names relative to `where`, so re-prefix the root
+# package name to obtain the full dotted paths.
+_PACKAGE_ROOT = os.path.join(_ROOT_DIR, 'android_world')
+_PACKAGES = ['android_world'] + [
+    'android_world.' + package
+    for package in setuptools.find_packages(where=_PACKAGE_ROOT)
+]
+
 setuptools.setup(
     name='android_world',
     package_data={
@@ -82,7 +96,7 @@ setuptools.setup(
             'res/xml/*.xml',
         ]
     },
-    packages=setuptools.find_packages(),
+    packages=_PACKAGES,
     setup_requires=[f'grpcio-tools=={_GRPCIO_TOOLS_VERSION}'],
     install_requires=[
         f'protobuf=={_PROTOBUF_VERSION}',
