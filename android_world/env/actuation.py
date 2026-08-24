@@ -28,15 +28,17 @@ from android_world.env import representation_utils
 def execute_adb_action(
     action: json_action.JSONAction,
     screen_elements: list[Any],  # list[UIElement]
-    screen_size: tuple[int, int],
-    env: env_interface.AndroidEnvInterface,
+    screen_size: tuple[int, int] | None = None,
+    env: env_interface.AndroidEnvInterface = None,
 ) -> None:
   """Execute an action based on a JSONAction object.
 
   Args:
       action: JSONAction object containing the action to be executed.
       screen_elements: List of UI elements on the screen.
-      screen_size: The (width, height) of the screen.
+      screen_size: The (width, height) of the screen. Only required by
+          coordinate-deriving action types (scroll, swipe,
+          launch_adb_activity); None is acceptable for the rest.
       env: The environment to execute the action in.
   """
   if action.action_type in ['click', 'double_tap', 'long_press']:
@@ -80,7 +82,7 @@ def execute_adb_action(
         # First focus on enter text UI element.
         click_action = copy.deepcopy(action)
         click_action.action_type = 'click'
-        execute_adb_action(click_action, screen_elements, screen_size, env)
+        execute_adb_action(click_action, screen_elements, env=env)
         time.sleep(1.0)
 
       if action.clear_text:
@@ -137,6 +139,10 @@ def execute_adb_action(
       )
   elif action.action_type == 'scroll':
 
+    if screen_size is None:
+      raise ValueError(
+          'scroll actions require screen_size to be provided.'
+      )
     screen_width, screen_height = screen_size
     if action.index:
       x_min, y_min, x_max, y_max = (
@@ -167,6 +173,10 @@ def execute_adb_action(
     adb_utils.issue_generic_request(command, env)
 
   elif action.action_type == 'swipe':  # Inverse of scroll.
+    if screen_size is None:
+      raise ValueError(
+          'swipe actions require screen_size to be provided.'
+      )
     screen_width, screen_height = screen_size
     mid_x, mid_y = 0.5 * screen_width, 0.5 * screen_height
     direction = action.direction
@@ -201,6 +211,10 @@ def execute_adb_action(
     time.sleep(1.0)
 
   elif action.action_type == 'launch_adb_activity':
+    if screen_size is None:
+      raise ValueError(
+          'launch_adb_activity actions require screen_size to be provided.'
+      )
     if action.activity_nickname == 'app_drawer':
       adb_utils.press_home_button(env)
       time.sleep(1.0)
@@ -247,8 +261,9 @@ def find_and_click_element(
       element_text, env, case_sensitive
   )
 
-  screen_size = (0, 0)  # Unused, but required.
-  execute_adb_action(action, ui_elements, screen_size, env)
+  # Click-by-index derives coordinates from the element's bbox, so
+  # screen_size is not needed (and none is passed).
+  execute_adb_action(action, ui_elements, env=env)
 
 
 def _wait_and_find_click_element(
