@@ -130,6 +130,19 @@ ensure a consistent environment.
     You can see the `scripts/run_suite_on_docker.py` script as an example client
     to interact with the Android environment server running in Docker.
 
+4.  **Run an eval suite:**
+    `run_on_docker.py` is the Docker counterpart of `run.py`: it drives the
+    whole task suite over HTTP against the server above, with the same
+    checkpointing, resume, and result-summary behavior.
+    ```bash
+    python run_on_docker.py --suite_family android_world --tasks ClockStopWatchRunning
+    ```
+    The container is left running when the run finishes; restart it explicitly
+    (it takes 5-10 minutes to boot) with:
+    ```bash
+    ./server/restart_aw.sh 5000
+    ```
+
 ### Note for Apple Silicon users
 
 There are known [issues](https://github.com/amrsa1/Android-Emulator-image/issues/10) with installing the required package `emulator` on ARM chips (Apple Silicon). To get around this, if building images locally, you should build images for the AMD64/x86_64 instruction set, by running:

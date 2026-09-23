@@ -12,234 +12,94 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Example client for interacting with an Android environment server over HTTP.
+"""Minimal client example for the Android environment server (Docker).
 
-Prerequisites:
+Prerequisites (from the repository root):
 
-# Build the Docker image for the Android environment server from the root
-repository directory
-# docker build -t android_world:latest .
+  # Build the image and start a container on host port 5000:
+  ./scripts/run_container.sh 5000
 
-# Run the Docker container
-# docker run --privileged -p 5000:5000 -it android_world:latest
+  # ... wait for it to become healthy (5-10 minutes):
+  curl http://localhost:5000/health
 
-After running the server, you can use the client to interact with the
-environment. You'll need to implement your agent logic to interact with the
-environment.
+This script walks through the environment client's basic surface: health
+check, reset, state, a single action, and one full task lifecycle. For
+running a whole eval suite with checkpointing and result summaries, use
+`run_on_docker.py` instead -- it is the Docker counterpart of `run.py`.
+
+Note this script deliberately does NOT call client.close(): /close shuts down
+the environment inside the container without stopping the emulator, leaving
+the container unusable until it is restarted (./server/restart_aw.sh 5000,
+which itself needs 5-10 minutes).
 """
 
-import json
-import logging
 import time
-from typing import Any
 
+from android_world.env import interface
 from android_world.env import json_action
-import numpy as np
-import pydantic
-import requests
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
-
-Params = dict[str, int | str]
+BASE_URL = 'http://localhost:5000'
+HEALTH_TIMEOUT_SEC = 900
 
 
-class Response(pydantic.BaseModel):
-  status: str
-  message: str
+def wait_for_healthy_server(client: interface.AndroidEnvClient) -> None:
+  """Waits for the server's deep health probe to pass."""
+  start = time.time()
+  while not client.health():
+    if time.time() - start > HEALTH_TIMEOUT_SEC:
+      raise RuntimeError(
+          f'Server at {client.base_url} did not become healthy within'
+          f' {HEALTH_TIMEOUT_SEC}s. Check: docker logs aw_5000'
+      )
+    print('Environment is not healthy yet, waiting...')
+    time.sleep(5)
+  print('Environment server is healthy.')
 
 
-class AndroidEnvClient:
-  """Client for interacting with the Android environment server."""
-
-  def __init__(self):
-    logger.info(
-        "Setting up Android environment using Docker - Initial setup may take"
-        " 5-10 minutes. Please wait..."
-    )
-    self.base_url = "http://localhost:5000"
-
-  def reset(self, go_home: bool) -> Response:
-    """Resets the environment."""
-    response = requests.post(
-        f"{self.base_url}/reset", params={"go_home": go_home}
-    )
-    response.raise_for_status()
-    return Response(**response.json())
-
-  def get_screenshot(
-      self, wait_to_stabilize: bool = False
-  ) -> np.ndarray[Any, Any]:
-    """Gets the current screenshot of the environment."""
-    response = requests.get(
-        f"{self.base_url}/screenshot",
-        params={"wait_to_stabilize": wait_to_stabilize},
-    )
-    response.raise_for_status()
-    image = response.json()
-    return np.array(image["pixels"])
-
-  def execute_action(
-      self,
-      action: json_action.JSONAction,
-  ) -> Response:
-    """Executes an action in the environment."""
-    print(f"Executing action: {action.json_str()}")
-    response = requests.post(
-        f"{self.base_url}/execute_action", json=json.loads(action.json_str())
-    )
-    response.raise_for_status()
-    return Response(**response.json())
-
-  def get_suite_task_list(self, max_index: int) -> list[str]:
-    """Gets the list of tasks in the suite."""
-    response = requests.get(
-        f"{self.base_url}/suite/task_list", params={"max_index": max_index}
-    )
-    response.raise_for_status()
-    return response.json()["task_list"]
-
-  def get_suite_task_length(self, task_type: str) -> int:
-    """Gets the length of the suite of tasks."""
-    response = requests.get(
-        f"{self.base_url}/suite/task_length", params={"task_type": task_type}
-    )
-    response.raise_for_status()
-    return response.json()["length"]
-
-  def reinitialize_suite(
-      self,
-      n_task_combinations: int = 2,  # Default from initial server setup.
-      seed: int = 42,  # Default from initial server setup.
-      task_family: str = "android_world",  # Default from initial server setup.
-  ) -> Response:
-    """Reinitializes the suite of tasks."""
-    response = requests.get(
-        f"{self.base_url}/suite/reinitialize",
-        params={
-            "n_task_combinations": n_task_combinations,
-            "seed": seed,
-            "task_family": task_family,
-        },
-    )
-    response.raise_for_status()
-    return Response(**response.json())
-
-  def initialize_task(self, task_type: str, task_idx: int) -> Response:
-    """Initializes the task in the environment."""
-    params: Params = {"task_type": task_type, "task_idx": task_idx}
-    response = requests.post(f"{self.base_url}/task/initialize", params=params)
-    response.raise_for_status()
-    return Response(**response.json())
-
-  def tear_down_task(self, task_type: str, task_idx: int) -> Response:
-    """Tears down the task in the environment."""
-    params: Params = {"task_type": task_type, "task_idx": task_idx}
-    response = requests.post(f"{self.base_url}/task/tear_down", params=params)
-    response.raise_for_status()
-    return Response(**response.json())
-
-  def get_task_score(self, task_type: str, task_idx: int) -> float:
-    """Gets the score of the current task."""
-    params: Params = {"task_type": task_type, "task_idx": task_idx}
-    response = requests.get(f"{self.base_url}/task/score", params=params)
-    response.raise_for_status()
-    return response.json()["score"]
-
-  def get_task_goal(self, task_type: str, task_idx: int) -> str:
-    """Gets the goal of the current task."""
-    params: Params = {"task_type": task_type, "task_idx": task_idx}
-    response = requests.get(f"{self.base_url}/task/goal", params=params)
-    response.raise_for_status()
-    return response.json()["goal"]
-
-  def get_task_template(self, task_type: str, task_idx: int) -> str:
-    """Gets the template of the current task."""
-    params: Params = {"task_type": task_type, "task_idx": task_idx}
-    response = requests.get(f"{self.base_url}/task/template", params=params)
-    response.raise_for_status()
-    return response.json()["template"]
-
-  def close(self) -> None:
-    """Closes the environment."""
-    response = requests.post(f"{self.base_url}/close")
-    response.raise_for_status()
-
-  def health(self) -> bool:
-    """Checks the health of the environment."""
-    try:
-      response = requests.get(f"{self.base_url}/health")
-      response.raise_for_status()
-    except Exception as e:  # pylint: disable=broad-exception-caught
-      print(f"Environment is not healthy: {e}")
-      return False
-    return True
-
-
-if __name__ == "__main__":
-  client = AndroidEnvClient()
-
-  while True:
-    if not client.health():
-      print("Environment is not healthy, waiting for 1 second...")
-      time.sleep(1)
-    else:
-      break
+def main() -> None:
+  client = interface.AndroidEnvClient(base_url=BASE_URL)
+  wait_for_healthy_server(client)
 
   res = client.reset(go_home=True)
-  print(f"reset response: {res}")
+  print(f'reset response: {res}')
 
-  screenshot = client.get_screenshot()
-  print("Screen dimensions:", screenshot.shape)
+  # get_state returns the server's own pixels + UI element list, so element
+  # indices below are interpreted by /execute_action exactly as intended.
+  state = client.get_state(wait_to_stabilize=True)
+  print('Screen dimensions:', state.pixels.shape)
+  print('UI elements:', len(state.ui_elements))
 
   res = client.execute_action(
-      json_action.JSONAction(action_type="click", x=100, y=200)
+      json_action.JSONAction(action_type='click', x=540, y=1200)
   )
-  print(f"execute_action response: {res}")
+  print(f'execute_action response: {res}')
+
+  # Regenerate the suite with the same parameters run_on_docker.py uses.
+  res = client.reinitialize_suite(
+      n_task_combinations=1, seed=30, task_family='android_world'
+  )
+  print(f'reinitialize_suite response: {res}')
 
   task_list = client.get_suite_task_list(max_index=-1)
-  print(task_list)
+  print(f'{len(task_list)} tasks in the suite; first: {task_list[0]}')
 
-  res = client.reinitialize_suite()
-  print(f"reinitialize_suite response: {res}")
+  # A single task lifecycle. (run_on_docker.py does this for the whole
+  # suite, with an agent choosing actions and checkpointing the results.)
+  task_name = task_list[0]
+  try:
+    print(f'initialize_task: {client.initialize_task(task_name, 0)}')
+    print(f'goal: {client.get_task_goal(task_name, 0)}')
+    print(f'complexity: {client.get_task_complexity(task_name, 0)}')
 
-  for task_name in task_list:
-    num_tasks = client.get_suite_task_length(task_type=task_name)
-    print(f"num_tasks: {num_tasks}")
+    # Complete the task using your agent here, then score it. For example:
+    #   agent = t3a.ClientT3A(client, infer.Gpt4Wrapper('gpt-4-turbo-2024-04-09'))
+    #   episode_runner.run_episode(goal=goal, agent=agent, ...)
 
-    for cur_idx in range(num_tasks):
-      task_template = client.get_task_template(
-          task_type=task_name, task_idx=cur_idx
-      )
-      print(f"task_template: {task_template}")
+    print(f'score: {client.get_task_score(task_name, 0)}')
+    print(f'tear_down: {client.tear_down_task(task_name, 0)}')
+  except Exception as e:  # pylint: disable=broad-exception-caught
+    print(f'Error running task {task_name}: {e}')
 
-      task_goal = client.get_task_goal(task_type=task_name, task_idx=cur_idx)
-      print(f"task_goal: {task_goal}")
 
-      try:
-        res = client.initialize_task(task_type=task_name, task_idx=cur_idx)
-        print(f"initialize_task response: {res}")
-
-        # Complete the task using your agent...
-
-        task_score = client.get_task_score(
-            task_type=task_name, task_idx=cur_idx
-        )
-        print(f"task_score: {task_score}")
-
-        res = client.tear_down_task(task_type=task_name, task_idx=cur_idx)
-        print(f"tear_down_task response: {res}")
-
-      except Exception as e:  # pylint: disable=broad-exception-caught
-        # Error tasks:
-        # RetroPlayingQueue -> sqlite3.OperationalError: no such table:
-        # playing_queue.
-        # SimpleSmsReplyMostRecent -> IndexError: list index out of range
-        print(f"Error initializing task {task_name} {cur_idx}: {e}")
-        print("Continuing to next task...")
-        continue
-
-      res = client.reset(go_home=True)
-      print(f"reset response: {res}")
-
-  client.close()
+if __name__ == '__main__':
+  main()

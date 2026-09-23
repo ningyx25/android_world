@@ -41,10 +41,11 @@ class EpisodeResult:
 
 def run_episode(
     goal: str,
-    agent: base_agent.EnvironmentInteractingAgent,
+    agent: base_agent.EnvironmentInteractingAgent
+    | base_agent.ClientInteractingAgent,
     max_n_steps: int = 10,
     start_on_home_screen: bool = False,
-    termination_fn: Callable[[interface.AsyncEnv], float] | None = None,
+    termination_fn: Callable[[interface.AsyncEnv | None], float] | None = None,
     print_fn: Callable[[str], None] = print,
 ) -> EpisodeResult:
   """Runs an agent on goal, e.g., "turn off wifi".
@@ -55,14 +56,17 @@ def run_episode(
 
   Args:
     goal: The goal instruction for the agent.
-    agent: The agent to run on the environment.
+    agent: The agent to run on the environment. May be an
+      EnvironmentInteractingAgent (has `.env`) or a ClientInteractingAgent
+      (talks to a remote environment server and has no `.env`).
     max_n_steps: The max number of steps to allow an agent to run before ending
       an episode.
     start_on_home_screen: Whether to start episode from the home screen or just
       the current screen.
     termination_fn: If provided, a determines whether to terminate an episode.
       For example, for MiniWoB++ tasks, the episode should terminate if there is
-      a nonzero reward.
+      a nonzero reward. It receives the agent's env when there is one; for
+      client-backed agents it receives None.
     print_fn: A function to print log messages to the console or logger.
 
   Returns:
@@ -82,7 +86,7 @@ def run_episode(
     print_fn('Completed step {:d}.'.format(step_n + 1))
     assert constants.STEP_NUMBER not in result.data
     output.append(result.data | {constants.STEP_NUMBER: step_n})
-    if termination_fn(agent.env):
+    if termination_fn(getattr(agent, 'env', None)):
       print_fn('Environment ends episode.')
       return EpisodeResult(
           done=True,

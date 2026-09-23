@@ -217,3 +217,123 @@ def xml_dump_to_ui_elements(xml_string: str) -> list[UIElement]:
 
   process_node(parsed_hierarchy, is_root=True)
   return ui_elements
+
+
+def _json_safe(value: Any) -> Any:
+  """Coerces a value into plain JSON-serializable Python types.
+
+  UI elements built from the accessibility forest can carry protobuf / numpy
+  scalars (e.g. numpy ints for bounding boxes), which `json.dumps` rejects.
+  """
+  if value is None or isinstance(value, (bool, int, float, str)):
+    return value
+  if isinstance(value, dict):
+    return {str(k): _json_safe(v) for k, v in value.items()}
+  if isinstance(value, (list, tuple)):
+    return [_json_safe(v) for v in value]
+  if hasattr(value, 'item'):  # numpy scalar
+    return value.item()
+  return str(value)
+
+
+def _bounding_box_to_dict(bbox: Optional[BoundingBox]) -> Optional[dict]:
+  if bbox is None:
+    return None
+  return {
+      'x_min': _json_safe(bbox.x_min),
+      'x_max': _json_safe(bbox.x_max),
+      'y_min': _json_safe(bbox.y_min),
+      'y_max': _json_safe(bbox.y_max),
+  }
+
+
+def _bounding_box_from_dict(data: Optional[dict]) -> Optional[BoundingBox]:
+  if data is None:
+    return None
+  return BoundingBox(
+      x_min=data['x_min'],
+      x_max=data['x_max'],
+      y_min=data['y_min'],
+      y_max=data['y_max'],
+  )
+
+
+def ui_element_to_dict(ui_element: UIElement) -> dict[str, Any]:
+  """Converts a UIElement into a JSON-serializable dict.
+
+  Used by the Docker environment server to return the exact same UI element
+  list its /execute_action endpoint indexes into, so client-side element
+  indices match the server-side ones.
+
+  Args:
+    ui_element: The UI element to convert.
+
+  Returns:
+    A dict with only JSON-serializable values.
+  """
+
+  def _bool_or_none(value: Any) -> Optional[bool]:
+    return None if value is None else bool(value)
+
+  return {
+      'text': _json_safe(ui_element.text),
+      'content_description': _json_safe(ui_element.content_description),
+      'class_name': _json_safe(ui_element.class_name),
+      'bbox': _bounding_box_to_dict(ui_element.bbox),
+      'bbox_pixels': _bounding_box_to_dict(ui_element.bbox_pixels),
+      'hint_text': _json_safe(ui_element.hint_text),
+      'is_checked': _bool_or_none(ui_element.is_checked),
+      'is_checkable': _bool_or_none(ui_element.is_checkable),
+      'is_clickable': _bool_or_none(ui_element.is_clickable),
+      'is_editable': _bool_or_none(ui_element.is_editable),
+      'is_enabled': _bool_or_none(ui_element.is_enabled),
+      'is_focused': _bool_or_none(ui_element.is_focused),
+      'is_focusable': _bool_or_none(ui_element.is_focusable),
+      'is_long_clickable': _bool_or_none(ui_element.is_long_clickable),
+      'is_scrollable': _bool_or_none(ui_element.is_scrollable),
+      'is_selected': _bool_or_none(ui_element.is_selected),
+      'is_visible': _bool_or_none(ui_element.is_visible),
+      'package_name': _json_safe(ui_element.package_name),
+      'resource_name': _json_safe(ui_element.resource_name),
+      'tooltip': _json_safe(ui_element.tooltip),
+      'resource_id': _json_safe(ui_element.resource_id),
+      'metadata': _json_safe(ui_element.metadata),
+  }
+
+
+def ui_element_from_dict(data: dict[str, Any]) -> UIElement:
+  """Reconstructs a UIElement from `ui_element_to_dict` output.
+
+  Unknown keys are ignored so the client tolerates a server that sends
+  additional fields.
+
+  Args:
+    data: The dict produced by `ui_element_to_dict`.
+
+  Returns:
+    The reconstructed UI element.
+  """
+  return UIElement(
+      text=data.get('text'),
+      content_description=data.get('content_description'),
+      class_name=data.get('class_name'),
+      bbox=_bounding_box_from_dict(data.get('bbox')),
+      bbox_pixels=_bounding_box_from_dict(data.get('bbox_pixels')),
+      hint_text=data.get('hint_text'),
+      is_checked=data.get('is_checked'),
+      is_checkable=data.get('is_checkable'),
+      is_clickable=data.get('is_clickable'),
+      is_editable=data.get('is_editable'),
+      is_enabled=data.get('is_enabled'),
+      is_focused=data.get('is_focused'),
+      is_focusable=data.get('is_focusable'),
+      is_long_clickable=data.get('is_long_clickable'),
+      is_scrollable=data.get('is_scrollable'),
+      is_selected=data.get('is_selected'),
+      is_visible=data.get('is_visible'),
+      package_name=data.get('package_name'),
+      resource_name=data.get('resource_name'),
+      tooltip=data.get('tooltip'),
+      resource_id=data.get('resource_id'),
+      metadata=data.get('metadata'),
+  )

@@ -35,6 +35,7 @@ from android_world.env import adb_utils
 from android_world.env import env_launcher
 from android_world.env import interface
 from android_world.env import json_action
+from android_world.env import representation_utils
 from android_world.task_evals.miniwob.miniwob_base import get_episode_reward
 
 import fastapi
@@ -45,10 +46,14 @@ logger = logging.getLogger(__name__)
 
 
 class StateResponse(pydantic.BaseModel):
-  """Pydantic model for state responses, including pixels and UI elements."""
+  """Pydantic model for state responses, including pixels and UI elements.
 
-  pixels: list[int]
-  ui_elements: list[Any]
+  Documentation aid for the /state endpoint; the endpoint returns a plain
+  dict so FastAPI does not re-validate (and potentially drop) fields.
+  """
+
+  image_b64: str
+  ui_elements: list[dict[str, Any]]
 
 
 class SendIntentRequest(pydantic.BaseModel):
@@ -180,6 +185,30 @@ async def get_screenshot(wait_to_stabilize: bool, app_android_env: AndroidEnv):
   return {"image_b64": base64.b64encode(buf.getvalue()).decode()}
 
 
+@app.post("/state")
+async def get_state(app_android_env: AndroidEnv, wait_to_stabilize: bool = False):
+  """Returns the current pixels plus the server-side UI element list.
+
+  The UI elements returned here are the SAME list /execute_action indexes
+  into (both come from `AsyncAndroidEnv.get_state()`), so a client can
+  resolve element indices locally and have them interpreted identically
+  server-side. Deliberately no screenshot-style fallback: if the
+  accessibility chain is broken we must fail loudly, because silently
+  serving a stale/empty element list would make index-based actions hit
+  the wrong elements.
+  """
+  state = app_android_env.get_state(wait_to_stabilize=wait_to_stabilize)
+  buf = io.BytesIO()
+  Image.fromarray(state.pixels).save(buf, format='JPEG', quality=85)
+  return {
+      "image_b64": base64.b64encode(buf.getvalue()).decode(),
+      "ui_elements": [
+          representation_utils.ui_element_to_dict(element)
+          for element in state.ui_elements
+      ],
+  }
+
+
 @app.post("/execute_action")
 async def execute_action(
     action_dict: dict[str, typing.Any], app_android_env: AndroidEnv
@@ -210,8 +239,13 @@ def reinitialize_suite(
     n_task_combinations: int = 2,  # Default from initial lifespan setup
     seed: int = 42,  # Default from initial lifespan setup
     task_family: str = "android_world",
+    use_identical_params: bool = False,
 ):
-  """Re-initializes the task suite with new parameters."""
+  """Re-initializes the task suite with new parameters.
+
+  `use_identical_params` makes every instance of a task share the same
+  params (mirrors run.py's --fixed_task_seed).
+  """
   task_registry = request.app.state.task_registry
   try:
     current_aw_registry = task_registry.get_registry(task_family)
@@ -223,13 +257,15 @@ def reinitialize_suite(
       task_registry=current_aw_registry,
       n_task_combinations=n_task_combinations,
       seed=seed,
+      use_identical_params=use_identical_params,
   )
   request.app.state.suite = new_suite
   return {
       "status": "success",
       "message": (
           "Task suite re-initialized with"
-          f" n_task_combinations={n_task_combinations}, seed={seed}."
+          f" n_task_combinations={n_task_combinations}, seed={seed},"
+          f" use_identical_params={use_identical_params}."
       ),
   }
 

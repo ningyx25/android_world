@@ -133,3 +133,84 @@ class EnvironmentInteractingAgent(abc.ABC):
   @name.setter
   def name(self, name: str) -> None:
     self._name = name
+
+
+class ClientInteractingAgent(abc.ABC):
+  """Base class for an agent that directly interacts with and acts on the environment.
+
+  This class provides flexibility in agent design, allowing developers to define
+  custom action spaces and interaction methods without being confined to a
+  specific approach.
+  """
+
+  def __init__(
+      self,
+      client: interface.AndroidEnvClient,
+      name: str = '',
+      transition_pause: float | None = 1.0,
+  ):
+    """Initializes the agent.
+
+    Args:
+      client: The Android environment client.
+      name: The agent name.
+      transition_pause: The pause before grabbing the state. This is required
+        because typically the agent is grabbing state immediatley after an
+        action and the screen is still changing. If `None` is provided, then it
+        uses "auto" mode which dynamically adjusts the wait time based on
+        environmental feedback.
+
+    Raises:
+      ValueError: If the transition pause is negative.
+    """
+    self._client = client
+    self._name = name
+    if transition_pause is not None and transition_pause < 0:
+      raise ValueError(
+          f'transition_pause must be non-negative, got {transition_pause}'
+      )
+    self._transition_pause = transition_pause
+
+    self._max_steps = None
+
+  @property
+  def transition_pause(self) -> float | None:
+    return self._transition_pause
+
+  @transition_pause.setter
+  def transition_pause(self, transition_pause: float | None) -> None:
+    self._transition_pause = transition_pause
+
+  @property
+  def client(self):
+    return self._client
+
+  @client.setter
+  def client(self, client) -> None:
+    self._client = client
+
+  def set_max_steps(self, max_steps: int) -> None:
+    self._max_steps = max_steps
+
+  def reset(self, go_home: bool = False) -> None:
+    """Resets the agent."""
+    self.client.reset(go_home=go_home)
+
+  @abc.abstractmethod
+  def step(self, goal: str) -> AgentInteractionResult:
+    """Performs a step of the agent on the environment.
+
+    Args:
+      goal: The goal.
+
+    Returns:
+      Done and agent & observation data.
+    """
+
+  @property
+  def name(self) -> str:
+    return self._name
+
+  @name.setter
+  def name(self, name: str) -> None:
+    self._name = name

@@ -44,6 +44,26 @@ class FakeEnvironmentInteractingAgent(base_agent.EnvironmentInteractingAgent):
     )
 
 
+class FakeClientInteractingAgent(base_agent.ClientInteractingAgent):
+  """Client-backed agent; deliberately has no `.env` attribute."""
+
+  def __init__(
+      self,
+      client: interface.AndroidEnvClient,
+      name: str,
+      return_done: bool = False,
+  ):
+    super().__init__(client, name)
+    self.return_done = return_done
+    self.call_count = 0
+
+  def step(self, goal: str) -> base_agent.AgentInteractionResult:
+    self.call_count += 1
+    return base_agent.AgentInteractionResult(
+        done=self.return_done, data={}
+    )
+
+
 class EpisodeRunnerTest(absltest.TestCase):
 
   def setUp(self):
@@ -88,6 +108,35 @@ class EpisodeRunnerTest(absltest.TestCase):
     )
 
     mock_agent.env.reset.assert_called_with(go_home=True)
+
+  def test_client_agent_without_env_runs_with_default_termination(self):
+    """Client agents have no `.env`; run_episode must not touch one."""
+    client = mock.create_autospec(interface.AndroidEnvClient)
+    agent = FakeClientInteractingAgent(client, 'fake_agent')
+    self.assertFalse(hasattr(agent, 'env'))
+
+    result = episode_runner.run_episode('test_goal', agent, max_n_steps=2)
+
+    self.assertFalse(result.done)
+    self.assertLen(result.step_data[constants.STEP_NUMBER], 2)
+    client.reset.assert_called_once()
+
+  def test_client_agent_termination_fn_receives_none(self):
+    """The termination callback is handed None when there is no env."""
+    client = mock.create_autospec(interface.AndroidEnvClient)
+    agent = FakeClientInteractingAgent(client, 'fake_agent')
+    received: list[Any] = []
+
+    def termination_fn(env):
+      received.append(env)
+      return True
+
+    result = episode_runner.run_episode(
+        'test_goal', agent, termination_fn=termination_fn
+    )
+
+    self.assertTrue(result.done)
+    self.assertEqual(received, [None])
 
 
 if __name__ == '__main__':
