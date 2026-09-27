@@ -15,6 +15,7 @@
 """Checkpointer class."""
 
 import abc
+import concurrent.futures
 import datetime
 import gzip
 import io
@@ -134,20 +135,35 @@ class IncrementalCheckpointer(Checkpointer):
     directories = os.listdir(self.directory)
     directories.sort(key=sort_key)
 
-    data = []
-    for filename in directories:
-      if filename.endswith('.pkl.gz'):
+    def _load(fn: str) -> list[Episode]:
+      if fn.endswith('.pkl.gz'):
         try:
-          task_group_id = filename[:-7]  # Remove ".pkl.gz" extension
+          task_group_id = fn[:-7]  # Remove ".pkl.gz" extension
           task_group = self._load_task_group(task_group_id)
           if fields is not None:
             task_group = [
                 {field: episode[field] for field in fields}
                 for episode in task_group
             ]
-          data.extend(task_group)
+          return task_group
         except Exception as e:  # pylint: disable=broad-exception-caught
-          logging.info('Unable to load %s with exception: %s', filename, e)
+          logging.info('Unable to load %s with exception: %s', fn, e)  
+          return []
+      else:
+        logging.info('Skipping non-pickle file: %s', fn)
+        return []
+
+    max_workers = min(32, (os.cpu_count() or 1) + 4, len(directories))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+      futures = {executor.submit(_load, fn): fn for fn in directories}
+      fn2index = {fn: i for i, fn in enumerate(directories)}
+      results = []
+      for future in concurrent.futures.as_completed(futures):
+        results.append((fn2index[futures[future]], future.result()))
+
+    data = []
+    for _, task_group in sorted(results, key=lambda x: x[0]):
+      data.extend(task_group)
     return data
 
   def _load_task_group(self, task_group_id: str) -> list[Episode]:

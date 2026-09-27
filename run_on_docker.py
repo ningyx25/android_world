@@ -34,6 +34,13 @@ Example:
   python run_on_docker.py --agent_name client_t3a \
       --suite_family android_world --tasks ClockStopWatchRunning
 
+To run only part of a family, pass --task_index_range. Positions are 1-based
+and count over the whole suite (not over --tasks), so the 116-task
+android_world family splits cleanly into two runs:
+
+  python run_on_docker.py --agent_name client_t3a \
+      --suite_family android_world --task_index_range 59-116
+
 Notes:
   * The container is NOT shut down at the end of the run -- see
     `_main`'s closing comment for why /close is deliberately not called.
@@ -49,6 +56,7 @@ from collections.abc import Sequence
 import datetime
 import hashlib
 import os
+import re
 import time
 import traceback
 from typing import Any
@@ -62,6 +70,7 @@ from android_world import episode_runner
 from android_world import registry
 from android_world import suite_utils
 from android_world.agents import base_agent
+from android_world.agents import generic_v2
 from android_world.agents import infer
 from android_world.agents import t3a
 from android_world.env import interface
@@ -117,6 +126,15 @@ _TASKS = flags.DEFINE_list(
     'List of specific tasks to run in the given suite family. If None, run all'
     ' tasks in the suite family.',
 )
+
+_TASK_INDEX_RANGE = flags.DEFINE_string(
+    'task_index_range',
+    None,
+    'Range of tasks to run, in the format "START-END" (1-based, inclusive).'
+    ' For example, "1-58" runs the 1st through 58th task in the suite.'
+    ' If None, all tasks are run.',
+)
+
 _N_TASK_COMBINATIONS = flags.DEFINE_integer(
     'n_task_combinations',
     1,
@@ -206,12 +224,26 @@ def _get_agent(
     agent = t3a.ClientT3A(
         client, infer.OpenAIWrapper(base_url=_BASE_URL.value, model_name=_MODEL_NAME.value)
     )
+  elif _AGENT_NAME.value == 'client_generic':
+    # The baseline GenericAgentV2 port: the upstream MobileGym prompt, parsing
+    # and history, without the R2-SOL gates. Use client_generic_r2sol for the
+    # evolved candidate so the two can be compared directly.
+    agent = generic_v2.ClientGeneric(
+        client, base_url=_BASE_URL.value, model_name=_MODEL_NAME.value
+    )
+  elif _AGENT_NAME.value == 'client_generic_r2sol':
+    # This agent calls the model itself so it can honor the upstream sampling
+    # parameters, which OpenAIWrapper cannot express.
+    agent = generic_v2.ClientGenericR2SOL(
+        client, base_url=_BASE_URL.value, model_name=_MODEL_NAME.value
+    )
   else:
     raise ValueError(
         f'Unknown agent for Docker mode: {_AGENT_NAME.value}. Client-backed'
-        ' agents currently available: client_t3a. (The env-backed agents from'
-        ' run.py -- human_agent, random_agent, m3a_*, t3a_*, seeact -- require'
-        ' a local emulator and are not usable against the Docker server.)'
+        ' agents currently available: client_t3a, client_generic,'
+        ' client_generic_r2sol. (The env-backed agents from run.py --'
+        ' human_agent, random_agent, m3a_*, t3a_*, seeact -- require a local'
+        ' emulator and are not usable against the Docker server.)'
     )
 
   if (
@@ -263,34 +295,111 @@ def _wait_for_healthy_server(
     time.sleep(_HEALTH_POLL_INTERVAL_SEC)
 
 
-def _select_tasks(
-    client: interface.AndroidEnvClient, tasks: list[str] | None
+def _parse_task_index_range(spec: str) -> tuple[int, int]:
+  """Parses a "START-END" task range into 1-based inclusive bounds.
+
+  Args:
+    spec: The range, e.g. "1-58".
+
+  Returns:
+    The (start, end) bounds, both 1-based inclusive.
+
+  Raises:
+    ValueError: If `spec` is not "START-END" with 1 <= START <= END.
+  """
+  match = re.fullmatch(r'(\d+)\s*-\s*(\d+)', spec.strip())
+  if match is None:
+    raise ValueError(
+        f'Invalid --task_index_range {spec!r}: expected "START-END"'
+        ' (1-based, inclusive), e.g. "1-58".'
+    )
+  start, end = int(match.group(1)), int(match.group(2))
+  if start < 1:
+    raise ValueError(
+        f'Invalid --task_index_range {spec!r}: positions are 1-based, so'
+        ' START must be at least 1.'
+    )
+  if end < start:
+    raise ValueError(
+        f'Invalid --task_index_range {spec!r}: START ({start}) must not'
+        f' exceed END ({end}).'
+    )
+  return start, end
+
+
+def _slice_task_index_range(
+    task_list: list[str], index_range: str | None
 ) -> list[str]:
-  """Returns the suite's task keys, optionally filtered to `tasks`.
+  """Keeps the suite positions covered by `index_range`.
+
+  Positions count over the whole suite, independent of any `--tasks` filter,
+  so "1-58" always means the same tasks. Out-of-bounds ranges raise instead of
+  silently selecting nothing: "59-116" on a 58-task suite is a mistake worth
+  hearing about.
+
+  Args:
+    task_list: The suite's task keys, in suite order.
+    index_range: The "START-END" range, or None to keep everything.
+
+  Returns:
+    The selected task keys, in suite order.
+
+  Raises:
+    ValueError: If `index_range` is malformed or exceeds the suite size.
+  """
+  if index_range is None:
+    return list(task_list)
+  start, end = _parse_task_index_range(index_range)
+  if end > len(task_list):
+    raise ValueError(
+        f'--task_index_range {index_range!r} is out of bounds: the suite has'
+        f' {len(task_list)} tasks, so END must be at most {len(task_list)}.'
+    )
+  return task_list[start - 1 : end]
+
+
+def _select_tasks(
+    client: interface.AndroidEnvClient,
+    tasks: list[str] | None,
+    index_range: str | None = None,
+) -> list[str]:
+  """Returns the suite's task keys, filtered to `tasks` and `index_range`.
 
   Validation is done against the server's suite (not a local registry), since
-  the server owns the task objects.
+  the server owns the task objects. When both filters are given, `index_range`
+  still counts over the whole suite and the two are intersected -- so
+  combining them keeps only the tasks that satisfy both.
 
   Args:
     client: The environment client.
     tasks: Task keys to keep, or None to keep all.
+    index_range: "START-END" suite positions (1-based, inclusive) to keep, or
+      None to keep all.
 
   Returns:
     The task keys to run, in suite order.
 
   Raises:
-    ValueError: If a requested task is not in the suite.
+    ValueError: If a requested task is not in the suite, `index_range` is
+      malformed or out of bounds, or the two filters select nothing.
   """
   task_list = client.get_suite_task_list(max_index=-1)
+  selected = _slice_task_index_range(task_list, index_range)
   if tasks is None:
-    return task_list
+    return selected
   for name in tasks:
     if name not in task_list:
       raise ValueError(
           f'Task {name} not found in the suite.'
           + suite_utils._suggest_keyword(name, task_list)  # pylint: disable=protected-access
       )
-  return [name for name in task_list if name in set(tasks)]
+  selected = [name for name in selected if name in set(tasks)]
+  if not selected and index_range is not None:
+    raise ValueError(
+        f'--tasks and --task_index_range {index_range!r} select no tasks in'
+        ' common: positions count over the whole suite, not over --tasks.'
+    )
+  return selected
 
 
 def _instance_seed(
@@ -461,6 +570,12 @@ def _main() -> None:
   n_task_combinations = _N_TASK_COMBINATIONS.value
   use_identical_params = _FIXED_TASK_SEED.value
 
+  # Fail fast on a malformed range: _select_tasks validates it again once the
+  # suite is known, but that happens after the health wait, and a typo should
+  # not cost a 5-10 minute container boot.
+  if _TASK_INDEX_RANGE.value is not None:
+    _parse_task_index_range(_TASK_INDEX_RANGE.value)
+
   client = interface.AndroidEnvClient(base_url=_SERVER_URL.value)
   _wait_for_healthy_server(client, _HEALTH_TIMEOUT_SEC.value)
 
@@ -470,7 +585,7 @@ def _main() -> None:
       task_family=_SUITE_FAMILY.value,
       use_identical_params=use_identical_params,
   )
-  task_types = _select_tasks(client, _TASKS.value)
+  task_types = _select_tasks(client, _TASKS.value, _TASK_INDEX_RANGE.value)
 
   agent = _get_agent(client, _SUITE_FAMILY.value)
   if _SUITE_FAMILY.value.startswith('miniwob'):
@@ -487,7 +602,12 @@ def _main() -> None:
 
   print(
       f'Starting eval with agent {_AGENT_NAME.value} and writing to'
-      f' {checkpoint_dir}'
+      f' {checkpoint_dir}: {len(task_types)} tasks'
+      + (
+          f' from --task_index_range {_TASK_INDEX_RANGE.value}'
+          if _TASK_INDEX_RANGE.value is not None
+          else ''
+      )
   )
 
   completed_tasks, failed_tasks = suite_utils._get_task_info(  # pylint: disable=protected-access
