@@ -277,7 +277,12 @@ class AsyncAndroidEnv(AsyncEnv):
       iteration_start_time = time.time()
       current_state = self._get_state()
 
-      if self._prior_state.ui_elements == current_state.ui_elements:
+      if (self._prior_state.ui_elements == current_state.ui_elements
+          and current_state.ui_elements):
+        # Only count non-empty identical states: an empty UI tree during a
+        # screen transition satisfies [] == [] but is not a stable loaded state.
+        # Counting it would cause early exit before the destination screen has
+        # populated its a11y tree, returning 0 elements to the caller.
         stable_checks += 1
         if stable_checks == stability_threshold:
           break  # Exit early if stability is achieved.
