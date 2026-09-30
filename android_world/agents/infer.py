@@ -17,6 +17,7 @@
 import abc
 import base64
 import io
+import json
 import os
 import time
 from typing import Any, Optional
@@ -65,6 +66,110 @@ class LlmWrapper(abc.ABC):
     Returns:
       Text output, is_safe, and raw output.
     """
+
+
+class JevWrapper(abc.ABC):
+  """Abstract interface for the Jev decision model."""
+
+  @abc.abstractmethod
+  def predict_jev(
+      self,
+      request: dict[str, Any],
+  ) -> tuple[str, Optional[bool], Any]:
+    """Calls Jev with a structured decision request.
+
+    Args:
+      request: The request body without the model field, i.e.
+        {'state': ..., 'questions': ...}. The concrete wrapper adds its
+        configured model name.
+
+    Returns:
+      Response JSON text, is_safe, and the parsed JSON response (a dict).
+    """
+
+
+class TypeSafeJevWrapper(JevWrapper):
+  """TypeSafe systemone wrapper used by the mobile-jev policy.
+
+  Sends one structured choice request per decision to the TypeSafe evaluation
+  endpoint. Deliberately performs no retries: mobile-jev treats a transport
+  failure as fatal for the run, and an action must never be replayed.
+
+  Attributes:
+    api_key: The TypeSafe API key from TYPESAFE_API_KEY.
+    model_name: The model to use; TYPESAFE_MODEL, or 'jev-latest'.
+    timeout_sec: Per-request timeout in seconds.
+  """
+
+  ENDPOINT = 'https://api.typesafe.ai/v1/systemone'
+  DEFAULT_MODEL = 'jev-latest'
+
+  def __init__(
+      self,
+      model_name: str | None = None,
+      timeout_sec: float = 30.0,
+  ):
+    api_key = os.environ.get('TYPESAFE_API_KEY', '').strip()
+    if not api_key:
+      raise RuntimeError('TypeSafe API key not set.')
+    self.api_key = api_key
+    self.model_name = (
+        model_name or os.environ.get('TYPESAFE_MODEL') or self.DEFAULT_MODEL
+    )
+    self.timeout_sec = timeout_sec
+
+  def _redact(self, text: str) -> str:
+    """Redacts the API key from an error message and bounds its length."""
+    if self.api_key:
+      text = text.replace(self.api_key, '[redacted]')
+    return text[:500]
+
+  def predict_jev(
+      self,
+      request: dict[str, Any],
+  ) -> tuple[str, Optional[bool], Any]:
+    """Sends one decision request and returns the raw response.
+
+    Args:
+      request: {'state': ..., 'questions': ...}.
+
+    Returns:
+      (response JSON text, None, parsed response dict) on success, or
+      (ERROR_CALLING_LLM, False, None) on any failure. Failures are never
+      retried.
+    """
+    headers = {
+        'Content-Type': 'application/json',
+        'Authorization': f'Bearer {self.api_key}',
+    }
+    payload = {'model': self.model_name, **request}
+    try:
+      response = requests.post(
+          self.ENDPOINT,
+          headers=headers,
+          json=payload,
+          timeout=self.timeout_sec,
+      )
+    except requests.RequestException as e:
+      print(f'Error calling Jev: {self._redact(str(e))}')
+      return ERROR_CALLING_LLM, False, None
+    if not response.ok:
+      print(
+          f'Jev returned HTTP {response.status_code}: '
+          f'{self._redact(response.text)}'
+      )
+      return ERROR_CALLING_LLM, False, None
+    try:
+      parsed = response.json()
+    except ValueError:
+      print('Jev returned invalid JSON.')
+      return ERROR_CALLING_LLM, False, None
+    if not isinstance(parsed, dict) or not isinstance(
+        parsed.get('answers'), dict
+    ):
+      print('Jev response is missing answers.')
+      return ERROR_CALLING_LLM, False, None
+    return json.dumps(parsed, ensure_ascii=False), None, parsed
 
 
 class MultimodalLlmWrapper(abc.ABC):

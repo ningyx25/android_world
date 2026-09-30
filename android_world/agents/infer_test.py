@@ -12,6 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import contextlib
+import io
+import json
 import os
 import time
 from unittest import mock
@@ -130,6 +133,138 @@ class InferTest(absltest.TestCase):
 
     gpt4v.predict_mm("fake prompt", [])
     self.mock_sleep.assert_called_once()
+
+
+class TypeSafeJevWrapperTest(absltest.TestCase):
+  """Tests the TypeSafe Jev wrapper, with no network access."""
+
+  def setUp(self):
+    super().setUp()
+    self.mock_post = mock.patch.object(requests, "post").start()
+    os.environ["TYPESAFE_API_KEY"] = "fake-typesafe-key"
+    os.environ.pop("TYPESAFE_MODEL", None)
+
+  def tearDown(self):
+    super().tearDown()
+    mock.patch.stopall()
+    os.environ.pop("TYPESAFE_API_KEY", None)
+    os.environ.pop("TYPESAFE_MODEL", None)
+
+  def _response(self, status_code: int, body: bytes) -> requests.Response:
+    response = requests.Response()
+    response.status_code = status_code
+    response._content = body
+    return response
+
+  def _success_body(self) -> bytes:
+    return (
+        b'{"model": "jev-test", "answers": {"operation": {"type": "choice",'
+        b' "choice": "DONE", "probabilities": {"DONE": 1.0}, "confidence":'
+        b' 1.0}}, "usage": {"input_tokens": 1, "output_tokens": 1}}'
+    )
+
+  def test_missing_api_key_raises(self):
+    with mock.patch.dict(os.environ, {}, clear=True):
+      with self.assertRaisesRegex(RuntimeError, 'TypeSafe API key not set'):
+        infer.TypeSafeJevWrapper()
+
+  def test_empty_api_key_raises(self):
+    with mock.patch.dict(os.environ, {'TYPESAFE_API_KEY': '   '}):
+      with self.assertRaisesRegex(RuntimeError, 'TypeSafe API key not set'):
+        infer.TypeSafeJevWrapper()
+
+  def test_default_model(self):
+    wrapper = infer.TypeSafeJevWrapper()
+    self.assertEqual(wrapper.model_name, 'jev-latest')
+
+  def test_model_from_environment(self):
+    with mock.patch.dict(os.environ, {'TYPESAFE_MODEL': 'jev-env'}):
+      wrapper = infer.TypeSafeJevWrapper()
+    self.assertEqual(wrapper.model_name, 'jev-env')
+
+  def test_explicit_model_wins(self):
+    with mock.patch.dict(os.environ, {'TYPESAFE_MODEL': 'jev-env'}):
+      wrapper = infer.TypeSafeJevWrapper(model_name='jev-explicit')
+    self.assertEqual(wrapper.model_name, 'jev-explicit')
+
+  def test_successful_request(self):
+    self.mock_post.return_value = self._response(200, self._success_body())
+    wrapper = infer.TypeSafeJevWrapper()
+
+    request = {'state': {'goal': 'g'}, 'questions': {'q': {}}}
+    text, is_safe, raw = wrapper.predict_jev(request)
+
+    self.assertIsNone(is_safe)
+    self.assertEqual(raw, json.loads(text))
+    self.assertEqual(raw['answers']['operation']['choice'], 'DONE')
+
+    _, kwargs = self.mock_post.call_args
+    self.assertEqual(
+        self.mock_post.call_args.args[0], infer.TypeSafeJevWrapper.ENDPOINT
+    )
+    self.assertEqual(
+        kwargs['headers']['Authorization'], 'Bearer fake-typesafe-key'
+    )
+    self.assertEqual(kwargs['timeout'], 30.0)
+    self.assertEqual(kwargs['json']['model'], 'jev-latest')
+    self.assertEqual(kwargs['json']['state'], {'goal': 'g'})
+    self.assertEqual(kwargs['json']['questions'], {'q': {}})
+
+  def test_http_error_is_not_retried(self):
+    self.mock_post.return_value = self._response(500, b'{"error": "boom"}')
+    wrapper = infer.TypeSafeJevWrapper()
+
+    text, is_safe, raw = wrapper.predict_jev({'state': {}, 'questions': {}})
+
+    self.assertEqual(text, infer.ERROR_CALLING_LLM)
+    self.assertEqual(is_safe, False)
+    self.assertIsNone(raw)
+    self.mock_post.assert_called_once()
+
+  def test_invalid_json(self):
+    self.mock_post.return_value = self._response(200, b'not json')
+    wrapper = infer.TypeSafeJevWrapper()
+
+    text, is_safe, raw = wrapper.predict_jev({'state': {}, 'questions': {}})
+
+    self.assertEqual(text, infer.ERROR_CALLING_LLM)
+    self.assertEqual(is_safe, False)
+    self.assertIsNone(raw)
+
+  def test_missing_answers(self):
+    self.mock_post.return_value = self._response(200, b'{"model": "jev"}')
+    wrapper = infer.TypeSafeJevWrapper()
+
+    text, is_safe, raw = wrapper.predict_jev({'state': {}, 'questions': {}})
+
+    self.assertEqual(text, infer.ERROR_CALLING_LLM)
+    self.assertEqual(is_safe, False)
+    self.assertIsNone(raw)
+
+  def test_transport_error(self):
+    self.mock_post.side_effect = requests.Timeout('timed out')
+    wrapper = infer.TypeSafeJevWrapper()
+
+    text, is_safe, raw = wrapper.predict_jev({'state': {}, 'questions': {}})
+
+    self.assertEqual(text, infer.ERROR_CALLING_LLM)
+    self.assertEqual(is_safe, False)
+    self.assertIsNone(raw)
+    self.mock_post.assert_called_once()
+
+  def test_error_redacts_api_key(self):
+    self.mock_post.return_value = self._response(
+        401, b'{"error": "invalid key fake-typesafe-key"}'
+    )
+    wrapper = infer.TypeSafeJevWrapper()
+
+    stdout = io.StringIO()
+    with contextlib.redirect_stdout(stdout):
+      wrapper.predict_jev({'state': {}, 'questions': {}})
+
+    output = stdout.getvalue()
+    self.assertNotIn('fake-typesafe-key', output)
+    self.assertIn('[redacted]', output)
 
 
 if __name__ == "__main__":

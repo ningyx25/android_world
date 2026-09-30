@@ -55,6 +55,7 @@ Notes:
 from collections.abc import Sequence
 import datetime
 import hashlib
+import json
 import os
 import re
 import time
@@ -64,6 +65,8 @@ from typing import Any
 from absl import app
 from absl import flags
 from absl import logging
+import numpy as np
+from PIL import Image
 from android_world import checkpointer as checkpointer_lib
 from android_world import constants
 from android_world import episode_runner
@@ -72,8 +75,10 @@ from android_world import suite_utils
 from android_world.agents import base_agent
 from android_world.agents import generic_v2
 from android_world.agents import infer
+from android_world.agents import mobile_jev
 from android_world.agents import t3a
 from android_world.env import interface
+from android_world.env import representation_utils
 
 logging.set_verbosity(logging.WARNING)
 
@@ -154,6 +159,14 @@ _OUTPUT_PATH = flags.DEFINE_string(
     os.path.expanduser('~/android_world/runs'),
     'The path to save results to if not resuming from a checkpoint is not'
     ' provided.',
+)
+
+_RAW_DUMPS = flags.DEFINE_bool(
+    'raw_dumps',
+    True,
+    'Write each episode\'s images and text data as PNG + JSON under'
+    ' <checkpoint_dir>/raw_dumps/<task>_<instance>/ so it can be inspected'
+    ' without unpickling. The .pkl.gz episode logs are always written.',
 )
 
 # Agent specific.
@@ -237,13 +250,21 @@ def _get_agent(
     agent = generic_v2.ClientGenericR2SOL(
         client, base_url=_BASE_URL.value, model_name=_MODEL_NAME.value
     )
+  elif _AGENT_NAME.value == 'client_mobile_jev':
+    # Jev (TypeSafe) makes every decision; the LlmWrapper slot is unused.
+    # TYPESAFE_API_KEY / TYPESAFE_MODEL come from the environment; --base_url
+    # and --model_name are irrelevant for this agent.
+    agent = mobile_jev.ClientMobileJev(
+        client, llm=None, jev=infer.TypeSafeJevWrapper()
+    )
   else:
     raise ValueError(
         f'Unknown agent for Docker mode: {_AGENT_NAME.value}. Client-backed'
         ' agents currently available: client_t3a, client_generic,'
-        ' client_generic_r2sol. (The env-backed agents from run.py --'
-        ' human_agent, random_agent, m3a_*, t3a_*, seeact -- require a local'
-        ' emulator and are not usable against the Docker server.)'
+        ' client_generic_r2sol, client_mobile_jev. (The env-backed agents'
+        ' from run.py -- human_agent, random_agent, m3a_*, t3a_*, seeact --'
+        ' require a local emulator and are not usable against the Docker'
+        ' server.)'
     )
 
   if (
@@ -429,6 +450,122 @@ def _instance_seed(
   return int(hashlib.sha256(unique_seed_str.encode()).hexdigest(), 16) % (
       2**32
   )
+
+
+# The frames an agent may capture per step, in the order the dumps prefer them:
+# the before screenshot is the screen the agent observed when it made its
+# decision, so it is the most useful frame for replay and debugging. Both hold
+# pixel arrays, so neither is ever copied into the JSON.
+_STEP_FRAME_KEYS = ('before_screenshot', 'after_screenshot')
+
+
+def _write_json(path: str, payload: Any) -> None:
+  """Writes one JSON file, stringifying values JSON cannot represent."""
+  with open(path, 'w', encoding='utf-8') as f:
+    json.dump(payload, f, ensure_ascii=False, indent=2, default=str)
+
+
+def _step_frame(step_data: dict[str, Any], index: int) -> np.ndarray | None:
+  """Returns the frame captured for one step, or None if it captured none.
+
+  Args:
+    step_data: The transposed episode step data.
+    index: The step's position in the transposed lists.
+
+  Returns:
+    The step's frame, if any, preferring the before screenshot.
+  """
+  for key in _STEP_FRAME_KEYS:
+    frames = step_data.get(key) or []
+    pixels = frames[index] if index < len(frames) else None
+    if isinstance(pixels, np.ndarray) and pixels.ndim == 3:
+      return pixels
+  return None
+
+
+def _write_step_image(
+    pixels: np.ndarray, dump_dir: str, filename: str
+) -> None:
+  """Saves one step's frame as a PNG."""
+  Image.fromarray(pixels).save(os.path.join(dump_dir, filename), format='PNG')
+
+
+def _dump_raw_episode(
+    checkpoint_dir: str, instance_name: str, episode: dict[str, Any]
+) -> str:
+  """Writes an episode's images and text data next to its .pkl.gz log.
+
+  Layout: <checkpoint_dir>/raw_dumps/<instance_name>/ containing an
+  episode.json summary, and for every step a step_NNN.json with the model
+  request/response, the element lists, the agent diagnostics and the timings,
+  plus a matching step_NNN.png holding the step's frame.
+
+  Args:
+    checkpoint_dir: The run's checkpoint directory.
+    instance_name: The task instance key, e.g. 'ClockStopWatchRunning_0'.
+    episode: The episode record that was passed to the checkpointer.
+
+  Returns:
+    The directory the dumps were written to.
+  """
+  episode_constants = constants.EpisodeConstants
+  step_data = episode.get(episode_constants.EPISODE_DATA) or {}
+  step_numbers = step_data.get(constants.STEP_NUMBER) or []
+  dump_dir = os.path.join(checkpoint_dir, 'raw_dumps', instance_name)
+  os.makedirs(dump_dir, exist_ok=True)
+  _write_json(
+      os.path.join(dump_dir, 'episode.json'),
+      {
+          'instance': instance_name,
+          'task': episode.get(episode_constants.TASK_TEMPLATE),
+          'agent': episode.get(episode_constants.AGENT_NAME),
+          'goal': episode.get(episode_constants.GOAL),
+          'is_successful': episode.get(episode_constants.IS_SUCCESSFUL),
+          'run_time': episode.get(episode_constants.RUN_TIME),
+          'episode_length': episode.get(episode_constants.EPISODE_LENGTH),
+          'seed': episode.get(episode_constants.SEED),
+          'exception_info': episode.get(episode_constants.EXCEPTION_INFO),
+      },
+  )
+  # A step that captured no frame of its own -- the agent decided it was done
+  # without touching the device -- inherits the previous capture, which is
+  # still the current screen, so every step_NNN.json pairs with a step_NNN.png.
+  frame: np.ndarray | None = None
+  frame_step: int | None = None
+  for index, step_number in enumerate(step_numbers):
+    step = step_number + 1
+    prefix = f'step_{step:03d}'
+    captured = _step_frame(step_data, index)
+    if captured is not None:
+      frame, frame_step = captured, step
+    if frame is not None:
+      _write_step_image(frame, dump_dir, f'{prefix}.png')
+    payload: dict[str, Any] = {
+        'instance': instance_name,
+        'step': step,
+        'goal': episode.get(episode_constants.GOAL),
+        'agent': episode.get(episode_constants.AGENT_NAME),
+        'screenshot': f'{prefix}.png' if frame is not None else None,
+    }
+    if frame is not None and frame_step != step:
+      payload['screenshot_from_step'] = frame_step
+    for key, values in step_data.items():
+      if key in _STEP_FRAME_KEYS or key == constants.STEP_NUMBER:
+        continue
+      value = (
+          values[index]
+          if isinstance(values, list) and index < len(values)
+          else None
+      )
+      if (
+          isinstance(value, list)
+          and value
+          and isinstance(value[0], representation_utils.UIElement)
+      ):
+        value = [representation_utils.ui_element_to_dict(e) for e in value]
+      payload[key] = value
+    _write_json(os.path.join(dump_dir, f'{prefix}.json'), payload)
+  return dump_dir
 
 
 def _build_episode(
@@ -651,6 +788,16 @@ def _main() -> None:
       episode[constants.EpisodeConstants.AGENT_NAME] = agent.name
       episode[constants.EpisodeConstants.INSTANCE_ID] = i
       checkpointer.save_episodes([episode], instance_name)
+      if _RAW_DUMPS.value:
+        try:
+          dump_dir = _dump_raw_episode(
+              checkpoint_dir, instance_name, episode
+          )
+          print(f'Wrote raw dumps to {dump_dir}')
+        except Exception as e:  # pylint: disable=broad-exception-caught
+          # The .pkl.gz log is authoritative; a dump failure must not kill an
+          # otherwise healthy evaluation run.
+          print(f'Raw dump for {instance_name} failed (continuing): {e}')
       episodes_metadata.append({k: episode[k] for k in _METADATA_FIELDS})
       suite_utils.process_episodes(episodes_metadata, print_summary=True)
     print()

@@ -134,6 +134,8 @@ class IncrementalCheckpointer(Checkpointer):
     # Keep same order as runtime.
     directories = os.listdir(self.directory)
     directories.sort(key=sort_key)
+    if not directories:
+      return []
 
     def _load(fn: str) -> list[Episode]:
       if fn.endswith('.pkl.gz'):
