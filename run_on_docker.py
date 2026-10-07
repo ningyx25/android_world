@@ -76,6 +76,7 @@ from android_world.agents import base_agent
 from android_world.agents import generic_v2
 from android_world.agents import infer
 from android_world.agents import mobile_jev
+from android_world.agents import mobile_jev_v2
 from android_world.agents import t3a
 from android_world.env import interface
 from android_world.env import representation_utils
@@ -257,11 +258,29 @@ def _get_agent(
     agent = mobile_jev.ClientMobileJev(
         client, llm=None, jev=infer.TypeSafeJevWrapper()
     )
+  elif _AGENT_NAME.value == 'client_mobile_jev_v2':
+    # The ac-jev-v2 checkpoint decides from the screenshots, so this agent also
+    # needs a multimodal LLM -- the one job the decision model was not trained
+    # for is naming the text a TYPE_TEXT types. TYPESAFE_API_KEY and
+    # TYPESAFE_MODEL come from the environment, as does the vision endpoint
+    # (TYPESAFE_MM_ENDPOINT) and the completion cut (JEV_DONE_THRESHOLD).
+    agent = mobile_jev_v2.ClientMobileJevV2(
+        client,
+        llm=infer.OpenAIWrapper(
+            base_url=_BASE_URL.value, model_name=_MODEL_NAME.value
+        ),
+        jev=infer.TypeSafeJevWrapper(),
+        done_threshold=float(
+            os.environ.get('JEV_DONE_THRESHOLD', '').strip()
+            or mobile_jev_v2.DONE_THRESHOLD
+        ),
+    )
   else:
     raise ValueError(
         f'Unknown agent for Docker mode: {_AGENT_NAME.value}. Client-backed'
         ' agents currently available: client_t3a, client_generic,'
-        ' client_generic_r2sol, client_mobile_jev. (The env-backed agents'
+        ' client_generic_r2sol, client_mobile_jev, client_mobile_jev_v2. (The'
+        ' env-backed agents'
         ' from run.py -- human_agent, random_agent, m3a_*, t3a_*, seeact --'
         ' require a local emulator and are not usable against the Docker'
         ' server.)'
@@ -712,6 +731,17 @@ def _main() -> None:
   # not cost a 5-10 minute container boot.
   if _TASK_INDEX_RANGE.value is not None:
     _parse_task_index_range(_TASK_INDEX_RANGE.value)
+
+  # A v2 run cannot make a single decision without its vision endpoint; fail
+  # here for the same reason as the range check above -- after the boot, every
+  # task would fail at its first decision instead of one error costing nothing.
+  if _AGENT_NAME.value == 'client_mobile_jev_v2' and not os.environ.get(
+      'TYPESAFE_MM_ENDPOINT', ''
+  ).strip():
+    raise ValueError(
+        'client_mobile_jev_v2 needs TYPESAFE_MM_ENDPOINT pointing at the'
+        ' vision server (POST /v1/systemone).'
+    )
 
   client = interface.AndroidEnvClient(base_url=_SERVER_URL.value)
   _wait_for_healthy_server(client, _HEALTH_TIMEOUT_SEC.value)
