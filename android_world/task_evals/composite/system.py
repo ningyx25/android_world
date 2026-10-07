@@ -27,7 +27,7 @@ class TurnOnWifiAndOpenApp(task_eval.TaskEval):
 
   app_names = ("settings",)
   complexity = 2
-  schema = schema.create([schema.string("app_name", is_required=True)])
+  schema = schema.create([schema.string("app_name", is_required=True)])  # pyrefly: ignore[bad-override]
 
   template = "Turn on Wifi, then open the {app_name} app"
 
@@ -65,7 +65,7 @@ class TurnOffWifiAndTurnOnBluetooth(task_eval.TaskEval):
   complexity = 2
 
   # No parameters.
-  schema = schema.create([])
+  schema = schema.create([])  # pyrefly: ignore[bad-override]
 
   template = "Turn off WiFi, then enable bluetooth"
 

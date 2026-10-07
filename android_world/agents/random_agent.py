@@ -62,8 +62,8 @@ def _generate_random_action(
       json_action.SWIPE,
       json_action.INPUT_TEXT,
   ]:
-    action_details['x'] = random.randint(0, screen_size[0] - 1)
-    action_details['y'] = random.randint(0, screen_size[1] - 1)
+    action_details['x'] = random.randint(0, screen_size[0] - 1)  # pyrefly: ignore[bad-assignment]
+    action_details['y'] = random.randint(0, screen_size[1] - 1)  # pyrefly: ignore[bad-assignment]
     if action_type == json_action.INPUT_TEXT:
       action_details['text'] = ''.join(
           random.choices(text_characters, k=10)

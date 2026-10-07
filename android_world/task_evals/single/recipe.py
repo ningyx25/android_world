@@ -65,7 +65,7 @@ class _RecipeDeleteMultipleRecipes(
     titles = ', '.join(titles)
     return f'Delete the following recipes from Broccoli app: {titles}.'
 
-  def validate_deletion_integrity(
+  def validate_deletion_integrity(  # pyrefly: ignore[bad-override]
       self,
       before: list[sqlite_schema_utils.Recipe],
       after: list[sqlite_schema_utils.Recipe],
@@ -197,7 +197,7 @@ class RecipeDeleteDuplicateRecipes(
         ' remains'
     )
 
-  def validate_deletion_integrity(
+  def validate_deletion_integrity(  # pyrefly: ignore[bad-override]
       self,
       before: list[sqlite_schema_utils.Recipe],
       after: list[sqlite_schema_utils.Recipe],
@@ -321,7 +321,7 @@ def _get_rows_as_text(
     wrap_width: int | None = None,
 ) -> str:
   return sqlite_schema_utils.get_text_representation_of_rows(
-      rows,
+      rows,  # pyrefly: ignore[bad-argument-type]
       [
           'title',
           'description',
@@ -351,7 +351,7 @@ class _RecipeAddMultipleRecipes(sqlite_validators.AddMultipleRows, _RecipeApp):
     )
     return f'Add the following recipes into the Broccoli app:\n{text_repr}'
 
-  def validate_addition_integrity(
+  def validate_addition_integrity(  # pyrefly: ignore[bad-override]
       self,
       before: list[sqlite_schema_utils.Recipe],
       after: list[sqlite_schema_utils.Recipe],
@@ -361,7 +361,7 @@ class _RecipeAddMultipleRecipes(sqlite_validators.AddMultipleRows, _RecipeApp):
     return sqlite_validators.validate_rows_addition_integrity(
         before,
         after,
-        reference_rows,
+        reference_rows,  # pyrefly: ignore[bad-argument-type]
         compare_fields=[
             'title',
             'description',
@@ -384,7 +384,7 @@ class _RecipeAddMultipleRecipes(sqlite_validators.AddMultipleRows, _RecipeApp):
     )
 
   @classmethod
-  def _get_random_target_row(cls) -> sqlite_schema_utils.Recipe:
+  def _get_random_target_row(cls) -> sqlite_schema_utils.Recipe:  # pyrefly: ignore[bad-override]
     """Currently unused."""
     return _generate_random_recipe()
 

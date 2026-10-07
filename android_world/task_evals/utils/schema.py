@@ -85,7 +85,7 @@ def create(properties: Sequence[Property]) -> object:
         "type": prop.type,
     }
     if prop.options:
-      schema["enum"] = prop.options
+      schema["enum"] = prop.options  # pyrefly: ignore[bad-assignment]
     return schema
 
   return {

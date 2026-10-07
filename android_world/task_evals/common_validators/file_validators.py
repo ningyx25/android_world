@@ -28,7 +28,7 @@ class MoveFile(task_eval.TaskEval):
   """For checking that a file has been moved."""
 
   app_names = ("",)
-  complexity = None
+  complexity = None  # pyrefly: ignore[bad-override]
   schema = {
       "type": "object",
       "properties": {
@@ -102,7 +102,7 @@ class DeleteFile(task_eval.TaskEval):
   """For checking that a file has been deleted."""
 
   app_names = ("",)
-  complexity = None
+  complexity = None  # pyrefly: ignore[bad-override]
   schema = {
       "type": "object",
       "properties": {
@@ -167,7 +167,7 @@ class CreateFile(task_eval.TaskEval):
   """For checking that a new file has been created with a specific name and text."""
 
   app_names = ("",)
-  complexity = None
+  complexity = None  # pyrefly: ignore[bad-override]
   schema = {
       "type": "object",
       "properties": {

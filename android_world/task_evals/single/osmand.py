@@ -141,9 +141,9 @@ def _waypoint_matches_location(
     distance.
   """
   name = waypoint.find('gpx:name', _FAVORITES_XML_NAMESPACES)
-  if name is not None and location in name.text:
+  if name is not None and location in name.text:  # pyrefly: ignore[not-iterable]
     return True
-  lat, lon = [float(waypoint.attrib.get(x)) for x in ('lat', 'lon')]
+  lat, lon = [float(waypoint.attrib.get(x)) for x in ('lat', 'lon')]  # pyrefly: ignore[bad-argument-type]
   if location in _PRELOADED_MAP_LOCATIONS.keys():
     location_coords = _PRELOADED_MAP_LOCATIONS[location]
   else:
@@ -384,7 +384,7 @@ def _track_points(
   for track in tracks_root.findall('gpx:trk', _FAVORITES_XML_NAMESPACES):
     for segment in track.findall('gpx:trkseg', _FAVORITES_XML_NAMESPACES):
       for point in segment.findall('gpx:trkpt', _FAVORITES_XML_NAMESPACES):
-        yield (float(point.attrib.get('lat')), float(point.attrib.get('lon')))
+        yield (float(point.attrib.get('lat')), float(point.attrib.get('lon')))  # pyrefly: ignore[bad-argument-type]
 
 
 class OsmAndTrack(_OsmTaskEval):

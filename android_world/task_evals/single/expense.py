@@ -82,7 +82,7 @@ class _ExpenseDeleteMultiple(_Expense, sqlite_validators.DeleteMultipleRows):
         f'Delete the following expenses from {_APP_NAME}: {expense_names_str}.'
     )
 
-  def validate_deletion_integrity(
+  def validate_deletion_integrity(  # pyrefly: ignore[bad-override]
       self,
       before: list[sqlite_schema_utils.Expense],
       after: list[sqlite_schema_utils.Expense],
@@ -157,7 +157,7 @@ class _ExpenseDeleteDuplicates(_Expense, sqlite_validators.DeleteDuplicateRows):
         ' remains.'
     )
 
-  def validate_deletion_integrity(
+  def validate_deletion_integrity(  # pyrefly: ignore[bad-override]
       self,
       before: list[sqlite_schema_utils.Expense],
       after: list[sqlite_schema_utils.Expense],
@@ -233,7 +233,7 @@ def _get_expense_rows_as_text(
     wrap_width: int | None = None,
 ) -> str:
   return sqlite_schema_utils.get_text_representation_of_rows(
-      rows,
+      rows,  # pyrefly: ignore[bad-argument-type]
       [
           'name',
           'amount_dollars',
@@ -261,7 +261,7 @@ class _ExpenseAddMultiple(_Expense, sqlite_validators.AddMultipleRows):
     )
     return f'Add the following expenses into the {_APP_NAME}:\n{text_repr}'
 
-  def validate_addition_integrity(
+  def validate_addition_integrity(  # pyrefly: ignore[bad-override]
       self,
       before: list[sqlite_schema_utils.Expense],
       after: list[sqlite_schema_utils.Expense],
@@ -285,7 +285,7 @@ class _ExpenseAddMultiple(_Expense, sqlite_validators.AddMultipleRows):
     )
 
   @classmethod
-  def _get_random_target_row(cls) -> sqlite_schema_utils.Expense:
+  def _get_random_target_row(cls) -> sqlite_schema_utils.Expense:  # pyrefly: ignore[bad-override]
     return _generate_expense()
 
   @classmethod

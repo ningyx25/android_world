@@ -86,11 +86,11 @@ def get_text_representation_of_rows(
   """
   if format_type == 'csv':
     header = '|'.join(fields)
-    rows = [
+    rows = [  # pyrefly: ignore[bad-assignment]
         '|'.join(str(getattr(instance, field, '')) for field in fields)
         for instance in rows
     ]
-    return header + '\n' + '\n'.join(rows)
+    return header + '\n' + '\n'.join(rows)  # pyrefly: ignore[no-matching-overload]
   elif format_type == 'text_block':
     blocks = []
     for instance in rows:

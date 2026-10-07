@@ -486,7 +486,7 @@ class OpenAppTaskEval(task_eval.TaskEval):
     active_activity, _ = adb_utils.get_current_activity(env.controller)
     expected_package_name = _APP_NAME_TO_PACKAGE_NAME[self.params['app_name']]
     if (
-        parse_component_name(active_activity).package_name
+        parse_component_name(active_activity).package_name  # pyrefly: ignore[bad-argument-type]
         == expected_package_name
     ):
       return 1.0

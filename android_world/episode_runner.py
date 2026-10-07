@@ -105,7 +105,7 @@ def run_episode(
       )
   )
   return EpisodeResult(
-      done=result.done, step_data=_transpose_lod_to_dol(output)  # pylint: disable=undefined-variable
+      done=result.done, step_data=_transpose_lod_to_dol(output)  # pylint: disable=undefined-variable  # pyrefly: ignore[unbound-name]
   )
 
 

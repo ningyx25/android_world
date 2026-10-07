@@ -103,8 +103,8 @@ def get_a11y_tree(
   ] = None
   for _ in range(max_retries):
     try:
-      forest = env.accumulate_new_extras()['accessibility_tree'][-1]  # pytype:disable=attribute-error
-      return forest
+      forest = env.accumulate_new_extras()['accessibility_tree'][-1]
+      return forest  # pyrefly: ignore[bad-return]
     except KeyError:
       logging.warning('Could not get a11y tree, retrying.')
     time.sleep(sleep_duration)
@@ -222,15 +222,13 @@ class AndroidWorldController(base_wrapper.BaseWrapper):
 
   def refresh_env(self):
     # pylint: disable=protected-access
-    # pytype: disable=attribute-error
     # Reconnect to emulator and reload a11y wrapper in case we lose connection.
     self._env = get_controller(
-        console_port=self.env._coordinator._simulator._config.emulator_launcher.emulator_console_port,
-        adb_path=self.env._coordinator._simulator._config.adb_controller.adb_path,
-        grpc_port=self.env._coordinator._simulator._config.emulator_launcher.grpc_port,
+        console_port=self.env._coordinator._simulator._config.emulator_launcher.emulator_console_port,  # pyrefly: ignore[missing-attribute]
+        adb_path=self.env._coordinator._simulator._config.adb_controller.adb_path,  # pyrefly: ignore[missing-attribute]
+        grpc_port=self.env._coordinator._simulator._config.emulator_launcher.grpc_port,  # pyrefly: ignore[missing-attribute]
     ).env
     # pylint: enable=protected-access
-    # pytype: enable=attribute-error
 
   def get_pixels(self) -> np.ndarray:
     """Returns current screenshot pixels WITHOUT fetching the a11y tree.
@@ -610,16 +608,20 @@ def get_controller(
 ) -> AndroidWorldController:
   """Creates a controller by connecting to an existing Android environment."""
 
+  emulator_launcher = config_classes.EmulatorLauncherConfig(
+      emulator_console_port=console_port,
+      adb_port=console_port + 1,
+      grpc_port=grpc_port,
+  )
+  if hasattr(emulator_launcher, 'connect_to_existing'):
+    setattr(emulator_launcher, 'connect_to_existing', True)
+
   config = config_classes.AndroidEnvConfig(
       task=config_classes.FilesystemTaskConfig(
           path=_write_default_task_proto()
       ),
       simulator=config_classes.EmulatorConfig(
-          emulator_launcher=config_classes.EmulatorLauncherConfig(
-              emulator_console_port=console_port,
-              adb_port=console_port + 1,
-              grpc_port=grpc_port,
-          ),
+          emulator_launcher=emulator_launcher,
           adb_controller=config_classes.AdbControllerConfig(adb_path=adb_path),
       ),
   )

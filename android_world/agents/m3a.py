@@ -285,9 +285,9 @@ def _action_selection_prompt(
     The text prompt for action selection that will be sent to gpt4v.
   """
   if history:
-    history = '\n'.join(history)
+    history = '\n'.join(history)  # pyrefly: ignore[bad-assignment]
   else:
-    history = 'You just started, no action has been performed yet.'
+    history = 'You just started, no action has been performed yet.'  # pyrefly: ignore[bad-assignment]
 
   extra_guidelines = ''
   if additional_guidelines:
@@ -392,7 +392,7 @@ class M3A(base_agent.EnvironmentInteractingAgent):
     before_ui_elements_list = _generate_ui_elements_description_list(
         before_ui_elements, logical_screen_size
     )
-    step_data['raw_screenshot'] = state.pixels.copy()
+    step_data['raw_screenshot'] = state.pixels.copy()  # pyrefly: ignore[bad-assignment]
     before_screenshot = state.pixels.copy()
     for index, ui_element in enumerate(before_ui_elements):
       if m3a_utils.validate_ui_element(ui_element, logical_screen_size):
@@ -404,7 +404,7 @@ class M3A(base_agent.EnvironmentInteractingAgent):
             physical_frame_boundary,
             orientation,
         )
-    step_data['before_screenshot_with_som'] = before_screenshot.copy()
+    step_data['before_screenshot_with_som'] = before_screenshot.copy()  # pyrefly: ignore[bad-assignment]
 
     action_prompt = _action_selection_prompt(
         goal,
@@ -415,10 +415,10 @@ class M3A(base_agent.EnvironmentInteractingAgent):
         before_ui_elements_list,
         self.additional_guidelines,
     )
-    step_data['action_prompt'] = action_prompt
+    step_data['action_prompt'] = action_prompt  # pyrefly: ignore[bad-assignment]
     action_output, is_safe, raw_response = self.llm.predict_mm(
         action_prompt,
-        [
+        [  # pyrefly: ignore[bad-argument-type]
             step_data['raw_screenshot'],
             before_screenshot,
         ],
@@ -431,7 +431,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
 
     if not raw_response:
       raise RuntimeError('Error calling LLM in action selection phase.')
-    step_data['action_output'] = action_output
+    step_data['action_output'] = action_output  # pyrefly: ignore[bad-assignment]
     step_data['action_raw_response'] = raw_response
 
     reason, action = m3a_utils.parse_reason_action_output(action_output)
@@ -441,6 +441,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
     if (not reason) or (not action):
       logging.info('Action prompt output is not in the correct format.')
       step_data['summary'] = (
+          # pyrefly: ignore[bad-assignment]
           'Output for action selection is not in the correct format, so no'
           ' action is performed.'
       )
@@ -453,17 +454,18 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
 
     logging.info('Action: %s', action)
     logging.info('Reason: %s', reason)
-    step_data['action_reason'] = reason
+    step_data['action_reason'] = reason  # pyrefly: ignore[bad-assignment]
 
     try:
       converted_action = json_action.JSONAction(
-          **agent_utils.extract_json(action),
+          **agent_utils.extract_json(action),  # pyrefly: ignore[bad-unpacking]
       )
-      step_data['action_output_json'] = converted_action
+      step_data['action_output_json'] = converted_action  # pyrefly: ignore[bad-assignment]
     except Exception as e:  # pylint: disable=broad-exception-caught
       logging.info('Failed to convert the output to a valid action.')
       logging.info(str(e))
       step_data['summary'] = (
+          # pyrefly: ignore[bad-assignment]
           'Can not parse the output to a valid action. Please make sure to pick'
           ' the action from the list with required parameters (if any) in the'
           ' correct JSON format!'
@@ -482,7 +484,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
         in ['click', 'long_press', 'input_text', 'scroll']
         and action_index is not None
     ):
-      if action_index >= num_ui_elements:
+      if action_index >= num_ui_elements:  # pyrefly: ignore[unsupported-operation]
         logging.info(
             'Index out of range, prediction index is %s, but the'
             ' UI element list only has %d elements.',
@@ -490,6 +492,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
             num_ui_elements,
         )
         step_data['summary'] = (
+            # pyrefly: ignore[bad-assignment]
             'The parameter index is out of range. Remember the index must be in'
             ' the UI element list!'
         )
@@ -498,8 +501,8 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
 
       # Add mark to the target element.
       m3a_utils.add_ui_element_mark(
-          step_data['raw_screenshot'],
-          before_ui_elements[action_index],
+          step_data['raw_screenshot'],  # pyrefly: ignore[bad-argument-type]
+          before_ui_elements[action_index],  # pyrefly: ignore[bad-index]
           action_index,
           logical_screen_size,
           physical_frame_boundary,
@@ -509,7 +512,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
     if converted_action.action_type == 'status':
       if converted_action.goal_status == 'infeasible':
         logging.info('Agent stopped since it thinks mission impossible.')
-      step_data['summary'] = 'Agent thinks the request has been completed.'
+      step_data['summary'] = 'Agent thinks the request has been completed.'  # pyrefly: ignore[bad-assignment]
       self.history.append(step_data)
       return base_agent.AgentInteractionResult(
           True,
@@ -525,6 +528,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
       logging.info('Failed to execute action.')
       logging.info(str(e))
       step_data['summary'] = (
+          # pyrefly: ignore[bad-assignment]
           'Can not execute the action, make sure to select the action with'
           ' the required parameters (if any) in the correct JSON format!'
       )
@@ -556,10 +560,10 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
         )
 
     m3a_utils.add_screenshot_label(
-        step_data['before_screenshot_with_som'], 'before'
+        step_data['before_screenshot_with_som'], 'before'  # pyrefly: ignore[bad-argument-type]
     )
     m3a_utils.add_screenshot_label(after_screenshot, 'after')
-    step_data['after_screenshot_with_som'] = after_screenshot.copy()
+    step_data['after_screenshot_with_som'] = after_screenshot.copy()  # pyrefly: ignore[bad-assignment]
 
     summary_prompt = _summarize_prompt(
         action,
@@ -587,7 +591,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
           summary,
       )
       step_data['summary'] = (
-          'Some error occurred calling LLM during summarization phase: %s'
+          'Some error occurred calling LLM during summarization phase: %s'  # pyrefly: ignore[bad-assignment]
           % summary
       )
       self.history.append(step_data)
@@ -596,8 +600,8 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
           step_data,
       )
 
-    step_data['summary_prompt'] = summary_prompt
-    step_data['summary'] = f'Action selected: {action}. {summary}'
+    step_data['summary_prompt'] = summary_prompt  # pyrefly: ignore[bad-assignment]
+    step_data['summary'] = f'Action selected: {action}. {summary}'  # pyrefly: ignore[bad-assignment]
     logging.info('Summary: %s', summary)
     step_data['summary_raw_response'] = raw_response
 

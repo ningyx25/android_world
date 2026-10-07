@@ -100,7 +100,7 @@ class InformationRetrievalRegistry(Generic[TaskType]):
     def task_template(self) -> task_pb2.Task:  # pylint:disable=unused-argument
       return task_proto
 
-    return type(
+    return type(  # pyrefly: ignore[bad-return]
         task_proto.name,
         (self.task_type,),
         {

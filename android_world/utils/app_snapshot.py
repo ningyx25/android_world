@@ -23,14 +23,14 @@ from android_world.utils import file_utils
 
 def _app_data_path(app_name: str) -> str:
   package_name = adb_utils.extract_package_name(
-      adb_utils.get_adb_activity(app_name)
+      adb_utils.get_adb_activity(app_name)  # pyrefly: ignore[bad-argument-type]
   )
   return file_utils.convert_to_posix_path("/data/data/", package_name)
 
 
 def _snapshot_path(app_name: str) -> str:
   package_name = adb_utils.extract_package_name(
-      adb_utils.get_adb_activity(app_name)
+      adb_utils.get_adb_activity(app_name)  # pyrefly: ignore[bad-argument-type]
   )
   return file_utils.convert_to_posix_path(
       device_constants.SNAPSHOT_DATA, package_name

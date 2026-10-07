@@ -256,7 +256,7 @@ def _build_task_class(task_name: str) -> miniwob_base.MiniWoBTask:
     """Sets the task: i.e. which HTML file should be loaded."""
     return {'task_name': task_name}
 
-  return type(
+  return type(  # pyrefly: ignore[bad-return]
       _create_class_name(name),
       (miniwob_base.MiniWoBTask,),
       {'generate_random_params': generate_random_params},

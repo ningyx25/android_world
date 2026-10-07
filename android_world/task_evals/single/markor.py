@@ -186,7 +186,7 @@ class MarkorEditNote(Markor):
   }
 
   @property
-  def template(self) -> str:
+  def template(self) -> str:  # pyrefly: ignore[bad-override]
     templates = {
         "header": (
             "Edit {file_name} in Markor. Add to the top of the note {header}"
@@ -200,11 +200,11 @@ class MarkorEditNote(Markor):
     }
 
     if "edit_type" not in self.params and "edit_type" not in templates:
-      return templates.get(
+      return templates.get(  # pyrefly: ignore[no-matching-overload]
           self.params.get("edit_type"),
           "Invalid edit_type for {file_name} in Markor.",
       )
-    return templates[self.params.get("edit_type")]
+    return templates[self.params.get("edit_type")]  # pyrefly: ignore[bad-index]
 
   def initialize_task(self, env: interface.AsyncEnv) -> None:
     super().initialize_task(env)
@@ -279,7 +279,7 @@ class MarkorEditNote(Markor):
           [generate_random_sentence() for _ in range(3)]
       )
 
-    return params
+    return params  # pyrefly: ignore[bad-return]
 
 
 class MarkorDeleteNote(Markor):

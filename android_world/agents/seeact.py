@@ -200,7 +200,7 @@ class SeeAct(base_agent.EnvironmentInteractingAgent):
     try:
       action_ground_response = result["action_ground_response"]
       seeact_action = seeact_utils.extract_element_action_value(
-          action_ground_response.split("\n")
+          action_ground_response.split("\n")  # pyrefly: ignore[missing-attribute]
       )
       action = seeact_utils.convert_seeact_action_to_json_action(
           seeact_action, actionable_elements
@@ -217,7 +217,7 @@ class SeeAct(base_agent.EnvironmentInteractingAgent):
           seeact_action, actionable_elements
       )
       action_description = seeact_utils.generate_action_description(
-          seeact_action, target_element
+          seeact_action, target_element  # pyrefly: ignore[bad-argument-type]
       )
       actuation.execute_adb_action(
           action,

@@ -221,7 +221,7 @@ class SQLiteApp(task_eval.TaskEval, abc.ABC):
         A list of row objects, each representing a row from the specified table
         in the database.
     """
-    return sqlite_utils.get_rows_from_remote_device(
+    return sqlite_utils.get_rows_from_remote_device(  # pyrefly: ignore[bad-return]
         self.table_name, self.db_path, self.row_type, env, timeout_sec
     )
 

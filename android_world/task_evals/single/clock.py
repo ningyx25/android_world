@@ -103,7 +103,7 @@ def _is_timer_set(
 def _close_clock_app(env: interface.AsyncEnv):
   """Closes the clock app."""
   adb_utils.clear_app_data(
-      adb_utils.extract_package_name(adb_utils.get_adb_activity("clock")),
+      adb_utils.extract_package_name(adb_utils.get_adb_activity("clock")),  # pyrefly: ignore[bad-argument-type]
       env.controller,
   )
 
@@ -151,7 +151,7 @@ class ClockTimerEntry(_ClockEval):
         1.0
         if _is_timer_set(
             ui_elements=ui_elements,
-            current_activity=current_activity,
+            current_activity=current_activity,  # pyrefly: ignore[bad-argument-type]
             hours=self._params["hours"],
             minutes=self._params["minutes"],
             seconds=self._params["seconds"],
@@ -202,7 +202,7 @@ class ClockStopWatchPausedVerify(_ClockEval):
         1.0
         if _is_stopwatch_paused(
             ui_elements=ui_elements,
-            current_activity=current_activity,
+            current_activity=current_activity,  # pyrefly: ignore[bad-argument-type]
         )
         else 0.0
     )
@@ -239,7 +239,7 @@ class ClockStopWatchRunning(_ClockEval):
         1.0
         if _is_stopwatch_running(
             ui_elements=ui_elements,
-            current_activity=current_activity,
+            current_activity=current_activity,  # pyrefly: ignore[bad-argument-type]
         )
         else 0.0
     )

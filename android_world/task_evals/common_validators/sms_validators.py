@@ -265,7 +265,7 @@ class SimpleSMSSendSms(task_eval.TaskEval):
     )
     in_correct_app = (
         adb_utils.extract_package_name(
-            adb_utils.get_current_activity(env.controller)[0]
+            adb_utils.get_current_activity(env.controller)[0]  # pyrefly: ignore[bad-argument-type]
         )
         == "com.simplemobiletools.smsmessenger"
     )

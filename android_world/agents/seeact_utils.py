@@ -430,8 +430,8 @@ def extract_element_action_value(lines: list[str]) -> SeeActAction:
     elif line.startswith("VALUE:"):
       value = line.split(":")[1].strip().strip(".")
 
-  _validate_action(element, action, value)
-  return SeeActAction(action=action, element=element, value=value)
+  _validate_action(element, action, value)  # pyrefly: ignore[bad-argument-type]
+  return SeeActAction(action=action, element=element, value=value)  # pyrefly: ignore[bad-argument-type]
 
 
 @dataclasses.dataclass
@@ -699,7 +699,7 @@ def convert_seeact_action_to_json_action(
   if action_type == json_action.INPUT_TEXT:
     text = action.value
   elif action_type == json_action.SCROLL:
-    direction = _swipe_to_scroll(action.value)
+    direction = _swipe_to_scroll(action.value)  # pyrefly: ignore[bad-argument-type]
   elif action_type == json_action.OPEN_APP:
     app_name = action.value
   elif action_type == json_action.ANSWER:

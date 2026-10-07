@@ -120,7 +120,7 @@ def _scan_music_directory(env: interface.AsyncEnv):
 class RetroCreatePlaylist(task_eval.TaskEval):
   """Task to create a playlist in Retro Music."""
 
-  app_names = ['retro music']
+  app_names = ['retro music']  # pyrefly: ignore[bad-override]
   complexity = 2.4
   schema = {
       'type': 'object',
@@ -289,7 +289,7 @@ class RetroPlaylistDuration(RetroCreatePlaylist):
     for song in songs:
       if song.playlist_name != self.params['playlist_name']:
         return False
-      total_ms += song.duration_ms
+      total_ms += song.duration_ms  # pyrefly: ignore[unsupported-operation]
     return float(45 * 60 * 1000 <= total_ms <= 50 * 60 * 1000)
 
   @classmethod

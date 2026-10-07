@@ -41,7 +41,7 @@ class MockTaskEval(task_eval.TaskEval):
     }
 
   @property
-  def template(self) -> str:
+  def template(self) -> str:  # pyrefly: ignore[bad-override]
     return "Mock task with {param1}"
 
   @classmethod

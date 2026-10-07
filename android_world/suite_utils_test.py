@@ -72,7 +72,7 @@ class TestSuite(absltest.TestCase):
   def test_create_suite(self):
     n_task_combinations = 2
     suite = suite_utils.create_suite(
-        self.testing_registry, n_task_combinations=n_task_combinations
+        self.testing_registry, n_task_combinations=n_task_combinations  # pyrefly: ignore[bad-argument-type]
     )
     self.assertLen(
         suite['Task1'],
@@ -87,10 +87,10 @@ class TestSuite(absltest.TestCase):
 
   def test_determinism_with_same_seed(self):
     suite1 = suite_utils.create_suite(
-        self.testing_registry, n_task_combinations=2, seed=self.seed
+        self.testing_registry, n_task_combinations=2, seed=self.seed  # pyrefly: ignore[bad-argument-type]
     )
     suite2 = suite_utils.create_suite(
-        self.testing_registry, n_task_combinations=2, seed=self.seed
+        self.testing_registry, n_task_combinations=2, seed=self.seed  # pyrefly: ignore[bad-argument-type]
     )
 
     self.assertEqual(
@@ -116,10 +116,10 @@ class TestSuite(absltest.TestCase):
 
   def test_variation_with_different_seed(self):
     suite1 = suite_utils.create_suite(
-        self.testing_registry, n_task_combinations=2, seed=self.seed
+        self.testing_registry, n_task_combinations=2, seed=self.seed  # pyrefly: ignore[bad-argument-type]
     )
     suite2 = suite_utils.create_suite(
-        self.testing_registry, n_task_combinations=2, seed=self.seed + 1
+        self.testing_registry, n_task_combinations=2, seed=self.seed + 1  # pyrefly: ignore[bad-argument-type]
     )
 
     self.assertNotEqual(
@@ -135,7 +135,7 @@ class TestSuite(absltest.TestCase):
 
   @mock.patch.object(suite_utils.random, 'seed')
   def test_no_seed_provides_randomness(self, mock_seed):
-    suite_utils.create_suite(self.testing_registry, n_task_combinations=2)
+    suite_utils.create_suite(self.testing_registry, n_task_combinations=2)  # pyrefly: ignore[bad-argument-type]
     mock_seed.assert_not_called()
 
   def test_return_all_when_tasks_none(self):
@@ -179,7 +179,7 @@ class TestSuite(absltest.TestCase):
 
     result = suite_utils._filter_tasks(
         {
-            'Task1': expected,
+            'Task1': expected,  # pyrefly: ignore[bad-assignment]
             'Task2': [
                 test_utils.FakeCurrentStateEval(
                     test_utils.FakeCurrentStateEval.generate_random_params()
@@ -191,7 +191,7 @@ class TestSuite(absltest.TestCase):
                 )
             ],
         },
-        self.testing_registry,
+        self.testing_registry,  # pyrefly: ignore[bad-argument-type]
         tasks,
     )
 
@@ -314,7 +314,7 @@ class SuiteUtilsTest(parameterized.TestCase):
     failing_instance = test_utils.FakeAdbEval(
         test_utils.FakeAdbEval.generate_random_params()
     )
-    failing_instance.initialize_task = lambda: ValueError(
+    failing_instance.initialize_task = lambda: ValueError(  # pyrefly: ignore[bad-assignment]
         'Something went wrong'
     )
 
@@ -335,7 +335,7 @@ class SuiteUtilsTest(parameterized.TestCase):
     failing_instance = test_utils.FakeAdbEval(
         test_utils.FakeAdbEval.generate_random_params()
     )
-    failing_instance.is_successful = lambda: ValueError('Something went wrong')
+    failing_instance.is_successful = lambda: ValueError('Something went wrong')  # pyrefly: ignore[bad-assignment]
 
     result = suite_utils._run_task(
         failing_instance,
@@ -363,7 +363,7 @@ class SuiteUtilsTest(parameterized.TestCase):
     n_task_combinations = 1
     tasks = ['Task1']
     suite = suite_utils.create_suite(
-        self.testing_registry,
+        self.testing_registry,  # pyrefly: ignore[bad-argument-type]
         n_task_combinations=n_task_combinations,
         tasks=tasks,
     )

@@ -46,12 +46,12 @@ def execute_adb_action(
     x = action.x
     y = action.y
     if idx is not None:
-      if idx < 0 or idx >= len(screen_elements):
+      if idx < 0 or idx >= len(screen_elements):  # pyrefly: ignore[unsupported-operation]
         raise ValueError(
             f'Invalid element index: {idx}, must be between 0 and'
             f' {len(screen_elements)-1}.'
         )
-      element = screen_elements[idx]
+      element = screen_elements[idx]  # pyrefly: ignore[bad-index]
       if element.bbox_pixels is None:
         raise ValueError('Bbox is not present on element.')
       x, y = element.bbox_pixels.center
@@ -121,7 +121,7 @@ def execute_adb_action(
     adb_utils.press_back_button(env)
 
   elif action.action_type == 'press_keyboard':
-    adb_utils.press_keyboard_generic(action.keycode, env)
+    adb_utils.press_keyboard_generic(action.keycode, env)  # pyrefly: ignore[bad-argument-type]
   elif action.action_type == 'drag_and_drop':
     if action.touch_xy is not None and action.lift_xy is not None:
       command = adb_utils.generate_drag_and_drop_command(
@@ -146,10 +146,10 @@ def execute_adb_action(
     screen_width, screen_height = screen_size
     if action.index:
       x_min, y_min, x_max, y_max = (
-          max(screen_elements[action.index].bbox_pixels.x_min, 0),
-          max(screen_elements[action.index].bbox_pixels.y_min, 0),
-          min(screen_elements[action.index].bbox_pixels.x_max, screen_width),
-          min(screen_elements[action.index].bbox_pixels.y_max, screen_height),
+          max(screen_elements[action.index].bbox_pixels.x_min, 0),  # pyrefly: ignore[bad-index]
+          max(screen_elements[action.index].bbox_pixels.y_min, 0),  # pyrefly: ignore[bad-index]
+          min(screen_elements[action.index].bbox_pixels.x_max, screen_width),  # pyrefly: ignore[bad-index]
+          min(screen_elements[action.index].bbox_pixels.y_max, screen_height),  # pyrefly: ignore[bad-index]
       )
     else:
       x_min, y_min, x_max, y_max = (0, 0, screen_width, screen_height)
@@ -232,7 +232,7 @@ def execute_adb_action(
       )
       adb_utils.issue_generic_request(request, env)
   elif action.action_type == 'change_orientation':
-    adb_utils.change_orientation(action.orientation, env)
+    adb_utils.change_orientation(action.orientation, env)  # pyrefly: ignore[bad-argument-type]
   elif action.action_type == json_action.UNKNOWN:
     print('Unknown action type; no action will be executed. Try again...')
   else:

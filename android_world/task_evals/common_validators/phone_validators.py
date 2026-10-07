@@ -92,7 +92,7 @@ class MakeCall(task_eval.TaskEval):
     return check_if_dialer_with_phone_number(
         expected_number=self.phone_number,
         ui_elements=ui_elements,
-        current_activity=current_activity,
+        current_activity=current_activity,  # pyrefly: ignore[bad-argument-type]
     )
 
   def initialize_task(self, env: interface.AsyncEnv) -> None:

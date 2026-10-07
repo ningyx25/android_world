@@ -142,7 +142,7 @@ class TaskEval(abc.ABC):
   def initialize_task(self, env: interface.AsyncEnv) -> None:  # pylint: disable=unused-argument
     """Initializes the task."""
     # Reset the interaction cache so previous tasks don't affect this run:
-    env.interaction_cache = ""
+    env.interaction_cache = ""  # pyrefly: ignore[read-only]
     self.initialize_device_time(env)
     self._initialize_apps(env)
     logging.info("Initializing %s", self.name)

@@ -88,7 +88,7 @@ class AndroidToolController:
     time.sleep(5.0)
 
     package_name = adb_utils.extract_package_name(
-        adb_utils.get_current_activity(self._env)[0]
+        adb_utils.get_current_activity(self._env)[0]  # pyrefly: ignore[bad-argument-type]
     )
     # Depending on what the default SMS app we need to click different buttons.
     if package_name == "com.google.android.apps.messaging":
@@ -153,7 +153,7 @@ class AndroidToolController:
     examples = [
         {"method": method.__name__, "args": args} for args in example_args
     ]
-    return [doc_info, *examples]
+    return [doc_info, *examples]  # pyrefly: ignore[bad-return]
 
   def display_tool_usage(self) -> str:
     """Format the tool information and examples into a user-friendly string.
@@ -166,7 +166,7 @@ class AndroidToolController:
 
     for tool_name, tool_details in tools_info.items():
       formatted_info.append(f"\nAPI: {tool_name}\n")
-      formatted_info.append(f"Description: {tool_details[0]['doc']}\n")
+      formatted_info.append(f"Description: {tool_details[0]['doc']}\n")  # pyrefly: ignore[unsupported-operation]
       formatted_info.append("Examples:\n")
       for example in tool_details[1:]:
         formatted_info.append(f"  - JSON Request: {example}\n")

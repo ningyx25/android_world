@@ -29,7 +29,7 @@ from android_world.utils import file_utils
 class BrowserTask(task_eval.TaskEval):
   """Base class for browser tasks."""
 
-  app_names = ['chrome']
+  app_names = ['chrome']  # pyrefly: ignore[bad-override]
   complexity = 2
   schema = {
       'type': 'object',
@@ -57,7 +57,7 @@ class BrowserTask(task_eval.TaskEval):
     super().initialize_task(env)
     user_data_generation.clear_device_storage(env)
     chrome_activity = adb_utils.extract_package_name(
-        adb_utils.get_adb_activity('chrome')
+        adb_utils.get_adb_activity('chrome')  # pyrefly: ignore[bad-argument-type]
     )
 
     adb_utils.clear_app_data(
@@ -88,7 +88,7 @@ class BrowserTask(task_eval.TaskEval):
     super().tear_down(env)
     user_data_generation.clear_device_storage(env)
     adb_utils.clear_app_data(
-        adb_utils.extract_package_name(adb_utils.get_adb_activity('chrome')),
+        adb_utils.extract_package_name(adb_utils.get_adb_activity('chrome')),  # pyrefly: ignore[bad-argument-type]
         env.controller,
     )
     datetime_utils.toggle_auto_settings(
@@ -98,7 +98,7 @@ class BrowserTask(task_eval.TaskEval):
   def is_successful(self, env: interface.AsyncEnv) -> float:
     state = env.get_state()
     package_name = adb_utils.extract_package_name(
-        adb_utils.get_current_activity(env.controller)[0]
+        adb_utils.get_current_activity(env.controller)[0]  # pyrefly: ignore[bad-argument-type]
     )
     if package_name != 'com.android.chrome':
       return 0.0

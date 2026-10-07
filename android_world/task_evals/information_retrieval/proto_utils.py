@@ -112,21 +112,21 @@ def _cast_answers_to_type(
     match_types: list[task_pb2.Expectation.MatchType], answers: list[str]
 ) -> list[ExpectedAnswer]:
   if not match_types:
-    return answers
+    return answers  # pyrefly: ignore[bad-return]
   match match_types:
     case [task_pb2.Expectation.MatchType.STRING_MATCH]:
-      return [str(answer) for answer in answers]
+      return [str(answer) for answer in answers]  # pyrefly: ignore[bad-return]
     case [task_pb2.Expectation.MatchType.NUMBER_MATCH]:
-      return [float(answer) for answer in answers]
+      return [float(answer) for answer in answers]  # pyrefly: ignore[bad-return]
     case [task_pb2.Expectation.MatchType.DATE_MATCH]:
-      return [
+      return [  # pyrefly: ignore[bad-return]
           datetime.datetime.strptime(
               answer, datetime_utils_ir.DATE_FORMAT
           ).date()
           for answer in answers
       ]
     case [task_pb2.Expectation.MatchType.TIME_MATCH]:
-      return [
+      return [  # pyrefly: ignore[bad-return]
           datetime.datetime.strptime(answer, '%H:%M').time()
           for answer in answers
       ]
@@ -134,7 +134,7 @@ def _cast_answers_to_type(
         task_pb2.Expectation.MatchType.DATE_MATCH,
         task_pb2.Expectation.MatchType.TIME_MATCH,
     ]:
-      return [
+      return [  # pyrefly: ignore[bad-return]
           datetime.datetime.strptime(
               answer, datetime_utils_ir.DATE_FORMAT + ' %H:%M'
           )
@@ -200,16 +200,16 @@ def get_expected_answer(
         field_transformation.operation
         == task_pb2.FieldTransformation.Operation.SUM
     ):
-      return [sum((float(value) for value in field_values))]
+      return [sum((float(value) for value in field_values))]  # pyrefly: ignore[bad-return]
     elif (
         field_transformation.operation
         == task_pb2.FieldTransformation.Operation.COUNT
     ):
-      return [len(list(field_values))]
+      return [len(list(field_values))]  # pyrefly: ignore[bad-return]
     elif expectation.match_type == task_pb2.Expectation.MatchType.STRING_MATCH:
       return list(field_values)
     elif expectation.match_type == task_pb2.Expectation.MatchType.NUMBER_MATCH:
-      return [float(value) for value in field_values]
+      return [float(value) for value in field_values]  # pyrefly: ignore[bad-return]
     elif expectation.match_type == task_pb2.Expectation.MatchType.DATE_MATCH:
       expected_answer.extend([
           datetime.datetime.strptime(
@@ -225,10 +225,10 @@ def get_expected_answer(
       expected_answers.extend(expected_answer)
     else:
       expected_answers = [
-          _combine_date_and_time(answer1, answer2)
+          _combine_date_and_time(answer1, answer2)  # pyrefly: ignore[bad-specialization]
           for answer1, answer2 in zip(expected_answers, expected_answer)
       ]
-  return expected_answers
+  return expected_answers  # pyrefly: ignore[bad-return]
 
 
 def _get_field_values(proto: message.Message, field_name: str) -> Iterator[Any]:
@@ -415,16 +415,16 @@ def compare(
   if operator == task_pb2.ExclusionCondition.Operation.EQUAL_TO:
     return field_value == comparison_value
   elif operator == task_pb2.ExclusionCondition.Operation.GREATER_THAN:
-    return field_value > comparison_value
+    return field_value > comparison_value  # pyrefly: ignore[unsupported-operation]
   elif (
       operator == task_pb2.ExclusionCondition.Operation.GREATER_THAN_OR_EQUAL_TO
   ):
-    return field_value >= comparison_value
+    return field_value >= comparison_value  # pyrefly: ignore[unsupported-operation]
   elif operator == task_pb2.ExclusionCondition.Operation.LESS_THAN:
-    return field_value < comparison_value
+    return field_value < comparison_value  # pyrefly: ignore[unsupported-operation]
   elif operator == task_pb2.ExclusionCondition.Operation.LESS_THAN_OR_EQUAL_TO:
-    return field_value <= comparison_value
+    return field_value <= comparison_value  # pyrefly: ignore[unsupported-operation]
   elif operator == task_pb2.ExclusionCondition.Operation.CONTAINS:
-    return comparison_value in str(field_value)
+    return comparison_value in str(field_value)  # pyrefly: ignore[unsupported-operation]
   else:
     raise ValueError(f'Unsupported operator: {operator}')

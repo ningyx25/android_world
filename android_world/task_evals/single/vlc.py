@@ -87,7 +87,7 @@ class _VLC(task_eval.TaskEval):
 class VlcCreatePlaylist(_VLC):
   """Task to create a playlist in VLC."""
 
-  app_names = ['vlc']
+  app_names = ['vlc']  # pyrefly: ignore[bad-override]
   complexity = 2.8
   schema = {
       'type': 'object',
@@ -164,7 +164,7 @@ class VlcCreatePlaylist(_VLC):
 class VlcCreateTwoPlaylists(task_eval.TaskEval):
   """Task to create two playlists in VLC."""
 
-  app_names = ['vlc']
+  app_names = ['vlc']  # pyrefly: ignore[bad-override]
   complexity = 4.8
   schema = {
       'type': 'object',

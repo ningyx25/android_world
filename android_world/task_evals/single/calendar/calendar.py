@@ -99,13 +99,13 @@ class SimpleCalendarAddOneEvent(
   )
 
   @classmethod
-  def _get_random_target_row(cls) -> sqlite_schema_utils.CalendarEvent:
+  def _get_random_target_row(cls) -> sqlite_schema_utils.CalendarEvent:  # pyrefly: ignore[bad-override]
     """Generates a random calendar event."""
     return events_generator.generate_event(
         datetime_utils.create_random_october_2023_unix_ts()
     )
 
-  def validate_addition_integrity(
+  def validate_addition_integrity(  # pyrefly: ignore[bad-override]
       self,
       before: list[sqlite_schema_utils.CalendarEvent],
       after: list[sqlite_schema_utils.CalendarEvent],
@@ -277,7 +277,7 @@ class SimpleCalendarDeleteEvents(
       " {year}-{month}-{day}"
   )
 
-  def validate_deletion_integrity(
+  def validate_deletion_integrity(  # pyrefly: ignore[bad-override]
       self,
       before: list[sqlite_schema_utils.CalendarEvent],
       after: list[sqlite_schema_utils.CalendarEvent],
@@ -334,7 +334,7 @@ class SimpleCalendarDeleteOneEvent(SimpleCalendarDeleteEvents):
   )
 
   @classmethod
-  def _get_random_target_row(cls):
+  def _get_random_target_row(cls):  # pyrefly: ignore[bad-override]
     return events_generator.generate_event(
         datetime_utils.create_random_october_2023_unix_ts()
     )

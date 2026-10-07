@@ -36,7 +36,7 @@ class SaveCopyOfReceiptTaskEval(task_eval.TaskEval):
       " same name in Download"
   )
 
-  schema = schema.no_params()
+  schema = schema.no_params()  # pyrefly: ignore[bad-override]
 
   def initialize_task(self, env: interface.AsyncEnv) -> None:
     super().initialize_task(env)

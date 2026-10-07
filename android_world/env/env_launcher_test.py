@@ -41,15 +41,21 @@ class EnvLauncherTest(absltest.TestCase):
 
     env_launcher._get_env(5556, "some_adb_path", 8554)
 
+    expected_launcher_config = config_classes.EmulatorLauncherConfig(
+        emulator_console_port=5556,
+        adb_port=5557,
+        grpc_port=8554,
+    )
+    if hasattr(expected_launcher_config, "connect_to_existing"):
+      setattr(expected_launcher_config, "connect_to_existing", True)
+
     mock_loader.assert_called_with(
         config=config_classes.AndroidEnvConfig(
             task=config_classes.FilesystemTaskConfig(
                 path=android_world_controller._TASK_PATH
             ),
             simulator=config_classes.EmulatorConfig(
-                emulator_launcher=config_classes.EmulatorLauncherConfig(
-                    emulator_console_port=5556, adb_port=5557, grpc_port=8554
-                ),
+                emulator_launcher=expected_launcher_config,
                 adb_controller=config_classes.AdbControllerConfig(
                     adb_path="some_adb_path"
                 ),

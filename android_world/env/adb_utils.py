@@ -1766,7 +1766,7 @@ def retry(n: int) -> Callable[[Any], Any]:
   """Decorator to retry ADB commands."""
 
   def decorator(func: Callable[..., T]) -> Callable[..., T]:
-    def wrapper(*args: Any, **kwargs: Any) -> T:
+    def wrapper(*args: Any, **kwargs: Any) -> T:  # pyrefly: ignore[bad-return]
       attempts = 0
       while attempts < n:
         try:
