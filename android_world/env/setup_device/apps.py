@@ -37,7 +37,21 @@ APP_DATA = file_utils.convert_to_posix_path(os.path.dirname(__file__),
 
 
 def download_app_data(file_name: str) -> str:
-  """Downloads file from a GCS bucket, if not cached, and installs it."""
+  """Downloads a file from the GCS bucket, if not cached, and returns its path.
+
+  A prebaked image can ship the APK/data payloads under
+  ``AW_APP_DATA_CACHE_DIR``. Those are preferred over the container-local
+  ``/tmp`` cache, which is empty on every fresh ``docker run`` (so the legacy
+  path re-downloaded ~19 files on every boot). The remote fallback is kept so
+  a changed GCS URL or APK version still works.
+  """
+  baked_dir = os.environ.get("AW_APP_DATA_CACHE_DIR", "")
+  if baked_dir:
+    baked_path = file_utils.convert_to_posix_path(baked_dir, file_name)
+    if os.path.isfile(baked_path):
+      logging.info("Using prebaked app data %s", baked_path)
+      return baked_path
+
   cache_dir = file_utils.convert_to_posix_path(
       file_utils.get_local_tmp_directory(), "android_world", "app_data"
   )
@@ -48,7 +62,7 @@ def download_app_data(file_name: str) -> str:
   os.makedirs(cache_dir, exist_ok=True)
   if not os.path.isfile(full_path):
     logging.info("Downloading file_name %s to cache %s", file_name, cache_dir)
-    response = requests.get(remote_url)
+    response = requests.get(remote_url, timeout=30)
     if response.status_code == 200:
       with open(full_path, "wb") as file:
         file.write(response.content)

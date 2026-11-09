@@ -89,19 +89,62 @@ ARG PATH="$PATH:/root/.local/bin"
 ENV PATH="$PATH:/root/.local/bin"
 
 #=========================
-# Copying Scripts to root
+# Copy packaging metadata + proto sources FIRST, so editing server/*.py or the
+# shell scripts does not invalidate the expensive dependency layer. setup.py's
+# generate_protos cmdclass needs these files present at this point.
+#=========================
+COPY setup.py pyproject.toml README.md ./
+COPY android_world/ /android_world/
+
+#====================================
+# Install dependencies (also generates *_pb2.py at image build time)
+#====================================
+RUN uv pip install . --system
+
+#=========================
+# Copy the rest of the runtime code and scripts.
 #=========================
 COPY . /
 
 RUN chmod a+x docker_setup/start_emu.sh && \
     chmod a+x docker_setup/start_emu_headless.sh && \
     chmod a+x docker_setup/entrypoint.sh && \
-    chmod a+x docker_setup/watchdog.sh
+    chmod a+x docker_setup/watchdog.sh && \
+    chmod a+x docker_setup/bake_avd.sh
 
 #====================================
-# Install dependencies
+# Prebaked AVD: installed apps, app data snapshots and (optionally) a QEMU
+# boot snapshot, generated out-of-band by docker_setup/bake_avd.sh. The
+# directory is an empty placeholder until that script is run; the image still
+# builds, and the server falls back to runtime setup_apps via
+# server/android_server.py:_verify_prebaked_snapshots if snapshots are absent.
 #====================================
-RUN uv pip install . --system
+COPY docker_setup/prebaked/ /opt/aw_prebaked/
+RUN mkdir -p /root/.android/avd && \
+    if [ -f /opt/aw_prebaked/adbkey ]; then \
+      cp /opt/aw_prebaked/adbkey /opt/aw_prebaked/adbkey.pub /root/.android/ ; \
+    fi && \
+    if [ -d /opt/aw_prebaked/app_data ]; then \
+      mkdir -p /opt/aw_cache && cp -a /opt/aw_prebaked/app_data /opt/aw_cache/ ; \
+    fi && \
+    if [ -d "/opt/aw_prebaked/${EMULATOR_NAME}.avd" ]; then \
+      cp -a "/opt/aw_prebaked/${EMULATOR_NAME}.avd" /root/.android/avd/ && \
+      cp -a "/opt/aw_prebaked/${EMULATOR_NAME}.ini" /root/.android/avd/ ; \
+    fi
+
+# Prebaked images skip the 24-app install loop at runtime. Build with
+# --build-arg AW_PREBAKED=0 to keep the legacy cold-boot setup.
+ARG AW_PREBAKED=1
+ENV AW_PREBAKED=${AW_PREBAKED}
+ENV AW_APP_DATA_CACHE_DIR=/opt/aw_cache/app_data
+ENV AW_DEVICE_SERIAL=emulator-5554
+
+EXPOSE 5000
+
+# Readiness signal for docker ps / external orchestration. Clients still poll
+# GET /health directly (run_on_docker.py); they do not read this status.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=300s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
 
 #=======================
 # framework entry point

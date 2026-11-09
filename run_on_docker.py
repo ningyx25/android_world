@@ -185,8 +185,9 @@ _FIXED_TASK_SEED = flags.DEFINE_boolean(
 _HEALTH_TIMEOUT_SEC = flags.DEFINE_integer(
     'health_timeout_sec',
     900,
-    'How long to wait for the environment server to become healthy. A fresh'
-    ' container needs 5-10 minutes to boot the emulator.',
+    'How long to wait for the environment server to become healthy. A'
+    ' prebaked container needs ~1-2 minutes; a legacy cold-boot image can'
+    ' take 5-10 minutes.',
 )
 _HEALTH_POLL_INTERVAL_SEC = 5.0
 
@@ -325,8 +326,8 @@ def _wait_for_healthy_server(
       raise RuntimeError(
           f'Environment server at {client.base_url} was not healthy after'
           f' {elapsed:.0f}s (attempt {attempt}). Check the container logs:'
-          f' docker logs aw_5000. A fresh container normally needs 5-10'
-          ' minutes to boot the emulator.'
+          f' docker logs aw_5000. A prebaked container normally needs 1-2'
+          ' minutes (a legacy cold-boot image can take 5-10 minutes).'
       )
     print(
         f'Environment not healthy yet (attempt {attempt}, {elapsed:.0f}s'
@@ -840,7 +841,7 @@ def _main() -> None:
   # environment without stopping the emulator, leaving the container in a
   # "server alive, env dead" state that the watchdog does not recover (it
   # only restarts on QEMU death). Restart the container explicitly when
-  # needed: ./server/restart_aw.sh 5000 (takes 5-10 minutes to boot).
+  # needed: ./server/restart_aw.sh 5000 (in-place server restart, seconds).
 
 
 def main(argv: Sequence[str]) -> None:

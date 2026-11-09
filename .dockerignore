@@ -1,0 +1,21 @@
+# Local-only state that COPY . / would otherwise drag into the image.
+.git
+.venv
+.pytest_cache
+.pytype
+.idea
+.DS_Store
+__pycache__/
+*.pyc
+build/
+dist/
+*.egg-info/
+uv.lock
+
+# IMPORTANT: do NOT exclude setup.py, pyproject.toml, README.md, *.proto or
+# android_world/ -- the PEP 517 build (uv pip install . --system) needs them
+# to generate the *_pb2.py bindings at image build time.
+#
+# IMPORTANT: do NOT exclude docker_setup/prebaked/ -- the baked AVD is copied
+# into the image deliberately. It is kept out of git (see .gitignore), not out
+# of the Docker build context.

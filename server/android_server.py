@@ -18,11 +18,14 @@ This server exposes endpoints to control an Android emulator, execute tasks,
 and manage task execution on AndroidWorld tasks.
 """
 
+import asyncio
 import base64
 import contextlib
 import io
 import logging
+import os
 import subprocess
+import threading
 import time
 import typing
 from typing import Any, Optional
@@ -32,17 +35,168 @@ from PIL import Image
 from android_world import registry as aw_registry_module
 from android_world import suite_utils
 from android_world.env import adb_utils
+from android_world.env import device_constants
 from android_world.env import env_launcher
 from android_world.env import interface
 from android_world.env import json_action
 from android_world.env import representation_utils
+from android_world.env.setup_device import setup as app_setup
 from android_world.task_evals.miniwob.miniwob_base import get_episode_reward
+
+try:
+  from server import health_probe
+except ImportError:  # Allow running this file directly from server/.
+  import health_probe  # type: ignore[no-redef]
 
 import fastapi
 import pydantic
 import uvicorn
 
 logger = logging.getLogger(__name__)
+
+# Background initialization / recovery knobs. All are env-overridable so the
+# same image can serve both a prebaked (fast) and a legacy (cold) container.
+_PREBAKED = os.environ.get("AW_PREBAKED") == "1"
+_DEVICE_SERIAL = os.environ.get("AW_DEVICE_SERIAL", "emulator-5554")
+_RESTART_COOLDOWN_SECONDS = float(
+    os.environ.get("AW_RESTART_COOLDOWN_SECONDS", "300")
+)
+_RESTART_GRACE_SECONDS = float(
+    os.environ.get("AW_RESTART_GRACE_SECONDS", "120")
+)
+_SOFT_RECOVERY_TIMEOUT_SECONDS = float(
+    os.environ.get("AW_SOFT_RECOVERY_TIMEOUT_SECONDS", "20")
+)
+_SNAPSHOT_DATA = device_constants.SNAPSHOT_DATA
+
+_recovery_lock = threading.Lock()
+_recovery_in_progress = False
+_last_recovery_attempt = 0.0
+_unhealthy_since: float | None = None
+
+
+def _app_setup_list():
+  """Returns () for prebaked images (skip app install), None otherwise.
+
+  ``setup_apps`` treats ``None`` as "use all 24 apps" but an empty tuple as
+  "iterate zero apps", while still running its root/home-button preamble. See
+  android_world/env/setup_device/setup.py:184-188.
+  """
+  return () if _PREBAKED else None
+
+
+def _verify_prebaked_snapshots(env: interface.AsyncEnv) -> bool:
+  """Returns True when prebaked app snapshots are present on the device.
+
+  ``task_eval._initialize_apps`` only logs a warning when a snapshot is
+  missing, which would silently produce a wrong benchmark initial state. A
+  lightweight "is the snapshot directory non-empty" check catches the
+  realistic failure (userdata not carried over) without paying 24 extra adb
+  round-trips on the startup path.
+  """
+  if not _PREBAKED:
+    return True
+  try:
+    result = subprocess.run(  # pylint: disable=subprocess-run-check
+        [
+            health_probe.ADB_BIN, "-s", _DEVICE_SERIAL, "shell", "ls",
+            _SNAPSHOT_DATA,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=5,
+        check=False,
+    )
+  except (subprocess.TimeoutExpired, OSError):
+    return False
+  if result.returncode != 0:
+    return False
+  return bool([line.strip() for line in result.stdout.splitlines() if line.strip()])
+
+
+def _request_soft_recovery(reason: str) -> bool:
+  """Schedules an adb-only recovery in a daemon thread; never blocks caller.
+
+  Only adb-level problems qualify. A missing QEMU process is deliberately left
+  to docker_setup/watchdog.sh, which triggers a full container recreate.
+  """
+  global _recovery_in_progress, _last_recovery_attempt, _unhealthy_since
+  if reason not in health_probe.SOFT_RECOVERABLE_REASONS:
+    _unhealthy_since = None
+    return False
+  now = time.monotonic()
+  if _unhealthy_since is None:
+    _unhealthy_since = now
+  if now - _unhealthy_since < _RESTART_GRACE_SECONDS:
+    return False
+  with _recovery_lock:
+    if (
+        _recovery_in_progress
+        or now - _last_recovery_attempt < _RESTART_COOLDOWN_SECONDS
+    ):
+      return False
+    _recovery_in_progress = True
+    _last_recovery_attempt = now
+
+  def _worker():
+    global _recovery_in_progress
+    try:
+      health_probe.soft_recovery(
+          _DEVICE_SERIAL, _SOFT_RECOVERY_TIMEOUT_SECONDS
+      )
+    except Exception:  # pylint: disable=broad-exception-caught
+      logger.exception("adb soft recovery failed")
+    finally:
+      with _recovery_lock:
+        _recovery_in_progress = False
+
+  threading.Thread(
+      target=_worker, name="aw-adb-recovery", daemon=True
+  ).start()
+  return True
+
+
+async def _initialize_async(fast_api_app: fastapi.FastAPI) -> None:
+  """Builds env/suite/registry off the event loop, then publishes atomically.
+
+  ``load_and_setup_env`` and ``create_suite`` are synchronous and blocking, so
+  they must go through ``asyncio.to_thread``; calling them directly would keep
+  uvicorn from serving requests. ``freeze_datetime=True``, seed 42 and
+  n_task_combinations=2 are preserved for benchmark reproducibility.
+  """
+  try:
+    env = await asyncio.to_thread(
+        env_launcher.load_and_setup_env,
+        console_port=5554,
+        emulator_setup=True,
+        freeze_datetime=True,
+        adb_path=fast_api_app.state.adb_path,
+        app_list=_app_setup_list(),
+    )
+    if not _verify_prebaked_snapshots(env):
+      logger.warning(
+          "Prebaked app snapshots missing; falling back to runtime setup_apps"
+      )
+      await asyncio.to_thread(app_setup.setup_apps, env)
+    task_registry = await asyncio.to_thread(aw_registry_module.TaskRegistry)
+    aw_registry = task_registry.get_registry(
+        task_registry.ANDROID_WORLD_FAMILY
+    )
+    suite = await asyncio.to_thread(
+        suite_utils.create_suite,
+        task_registry=aw_registry,
+        n_task_combinations=2,
+        seed=42,
+    )
+    # Publish all three at once so /health never observes a half-initialized
+    # state. 200 stays a reliable readiness signal for run_on_docker.py.
+    fast_api_app.state.app_android_env = env
+    fast_api_app.state.task_registry = task_registry
+    fast_api_app.state.suite = suite
+    fast_api_app.state.ready = True
+  except Exception as exc:  # pylint: disable=broad-exception-caught
+    fast_api_app.state.init_error = f"{type(exc).__name__}: {exc}"
+    logger.exception("Android environment initialization failed")
 
 
 class StateResponse(pydantic.BaseModel):
@@ -67,26 +221,28 @@ class SendIntentRequest(pydantic.BaseModel):
 
 @contextlib.asynccontextmanager
 async def lifespan(fast_api_app: fastapi.FastAPI):
-  """Manages the lifecycle of the Android environment and task suite."""
-  adb_path = "/opt/android/platform-tools/adb"
-  fast_api_app.state.adb_path = adb_path
-  fast_api_app.state.app_android_env = env_launcher.load_and_setup_env(
-      console_port=5554,
-      emulator_setup=True,
-      freeze_datetime=True,
-      adb_path=adb_path,
+  """Manages the lifecycle of the Android environment and task suite.
+
+  The expensive setup runs in a background task so uvicorn binds the port
+  immediately. /health reports 503 "initializing" until env, suite and
+  registry are all published by _initialize_async. This makes an initializing
+  container observable instead of looking dead, and gives HEALTHCHECK and
+  the supervisor a meaningful readiness signal.
+  """
+  fast_api_app.state.adb_path = health_probe.ADB_BIN
+  fast_api_app.state.app_android_env = None
+  fast_api_app.state.suite = None
+  fast_api_app.state.task_registry = None
+  fast_api_app.state.ready = False
+  fast_api_app.state.init_error = None
+  fast_api_app.state.init_task = asyncio.create_task(
+      _initialize_async(fast_api_app)
   )
-  task_registry = aw_registry_module.TaskRegistry()
-  aw_registry = task_registry.get_registry(task_registry.ANDROID_WORLD_FAMILY)
-  initial_suite = suite_utils.create_suite(
-      task_registry=aw_registry,
-      n_task_combinations=2,
-      seed=42,  # Optional: for reproducibility
-  )
-  fast_api_app.state.suite = initial_suite
-  fast_api_app.state.task_registry = task_registry
   yield
   # Shutdown
+  init_task = fast_api_app.state.init_task
+  if init_task is not None:
+    init_task.cancel()
   if fast_api_app.state.app_android_env is not None:
     fast_api_app.state.app_android_env.close()
 
@@ -119,12 +275,22 @@ adb_router = fastapi.APIRouter(prefix="/adb", tags=["adb"])
 
 def get_app_android_env(request: fastapi.Request) -> interface.AsyncEnv:
   """Dependency to get the application's Android environment instance."""
-  return request.app.state.app_android_env
+  env = request.app.state.app_android_env
+  if env is None:
+    raise fastapi.HTTPException(
+        status_code=503, detail="Android environment is still initializing"
+    )
+  return env
 
 
 def get_app_suite(request: fastapi.Request) -> suite_utils.Suite:
   """Dependency to get the application's task suite instance."""
-  return request.app.state.suite
+  suite = request.app.state.suite
+  if suite is None:
+    raise fastapi.HTTPException(
+        status_code=503, detail="Task suite is still initializing"
+    )
+  return suite
 
 
 AndroidEnv = typing.Annotated[
@@ -380,57 +546,37 @@ async def close(app_android_env: AndroidEnv):
 
 @app.get("/health")
 async def health(request: fastapi.Request):
-  """Deep health check: env init + QEMU process + adb device state.
+  """Deep health check: initialization + QEMU + adb + boot completion.
 
-  The old check returned 200 as long as the AsyncEnv object existed --
-  even with a dead emulator process, which made it useless as a liveness
-  probe (see the 2026-08-23 OOM incident where /health stayed 200 while
-  every screenshot 500'd). Now verifies, cheaply:
-    1. The environment is initialized.
-    2. A QEMU emulator process is alive in this container.
-    3. adb reports emulator-5554 in 'device' (fully booted) state.
-  Returns 503 with a machine-readable reason on any failure.
+  Returns 200 only when env, suite and registry are all ready AND the device
+  probe passes. Startup or device problems return 503 with a machine-readable
+  reason and Retry-After so clients and Docker HEALTHCHECK back off. Device
+  probes are delegated to server.health_probe, which timeout-boxes every adb
+  call (a wedged adb must never hang this endpoint).
   """
-  env = getattr(request.app.state, "app_android_env", None)
-  if not isinstance(env, interface.AsyncEnv):
+  state = request.app.state
+  if not state.ready:
     return fastapi.responses.JSONResponse(
         status_code=503,
-        content={"status": "error", "reason": "env not initialized"},
+        content={
+            "status": "error",
+            "reason": "initializing",
+            "detail": state.init_error,
+        },
+        headers={"Retry-After": "30"},
     )
-  # Probe 1: QEMU process alive (pgrep scans /proc; ~milliseconds).
-  try:
-    qemu_alive = (
-        subprocess.run(
-            ["pgrep", "-f", "qemu-system-x86_64-headless"],
-            capture_output=True,
-            timeout=5,
-        ).returncode
-        == 0
-    )
-  except Exception:  # pylint: disable=broad-exception-caught
-    qemu_alive = False
-  if not qemu_alive:
+
+  probe = await asyncio.to_thread(health_probe.probe_device, _DEVICE_SERIAL)
+  if not probe["healthy"]:
+    _request_soft_recovery(probe["reason"])
     return fastapi.responses.JSONResponse(
         status_code=503,
-        content={"status": "error", "reason": "qemu process not found"},
-    )
-  # Probe 2: emulator visible to adb in 'device' state.
-  adb_path = getattr(request.app.state, "adb_path", None) or (
-      "/opt/android/platform-tools/adb"
-  )
-  try:
-    devices_out = subprocess.run(
-        [adb_path, "devices"],
-        capture_output=True,
-        timeout=5,
-    ).stdout.decode("utf-8", errors="replace")
-    device_ok = "emulator-5554\tdevice" in devices_out
-  except Exception:  # pylint: disable=broad-exception-caught
-    device_ok = False
-  if not device_ok:
-    return fastapi.responses.JSONResponse(
-        status_code=503,
-        content={"status": "error", "reason": "emulator-5554 not in device state"},
+        content={
+            "status": "error",
+            "reason": probe["reason"],
+            "checks": probe,
+        },
+        headers={"Retry-After": "30"},
     )
   return {"status": "success"}
 

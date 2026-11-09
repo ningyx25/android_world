@@ -274,5 +274,43 @@ class ApiTest(absltest.TestCase):
     run_mock.assert_not_called()
 
 
+class RestartServerInPlaceTest(absltest.TestCase):
+
+  def test_kills_server_and_polls_health(self):
+    with mock.patch.object(
+        api, 'get_container_info',
+        return_value=constants.ContainerInfo(host_port=3800),
+    ), mock.patch.object(
+        api.docker, 'run_command'
+    ) as run_mock, mock.patch.object(
+        api, 'probe_health', side_effect=[False, True]
+    ) as health_mock, mock.patch.object(api.time, 'sleep'):
+      ok = api.restart_server_in_container('aw_3800')
+    self.assertTrue(ok)
+    self.assertEqual(
+        run_mock.call_args[0][0],
+        ['docker', 'exec', 'aw_3800', 'pkill', '-f',
+         'server[.]android_server'],
+    )
+    self.assertEqual(health_mock.call_count, 2)
+
+  def test_uses_exact_docker_exec_command(self):
+    with mock.patch.object(
+        api, 'get_container_info',
+        return_value=constants.ContainerInfo(host_port=3800),
+    ), mock.patch.object(api.docker, 'run_command') as run_mock, \
+        mock.patch.object(api, 'probe_health', return_value=True), \
+        mock.patch.object(api.time, 'sleep'):
+      api.restart_server_in_container('aw_3800')
+    self.assertEqual(
+        run_mock.call_args.kwargs['allowed_exit_codes'], {0, 1, 137, 143}
+    )
+
+  def test_unknown_port_raises(self):
+    with mock.patch.object(api, 'get_container_info', return_value=None):
+      with self.assertRaises(ValueError):
+        api.restart_server_in_container('weird_name')
+
+
 if __name__ == '__main__':
   absltest.main()

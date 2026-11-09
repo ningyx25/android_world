@@ -222,5 +222,46 @@ class EnvTest(absltest.TestCase):
     self.assertTrue(payload[0]['passed'])
 
 
+class RestartFlagsTest(absltest.TestCase):
+
+  def _parse(self, argv):
+    return main.create_parser().parse_args(argv)
+
+  def test_restart_defaults_to_in_place(self):
+    args = self._parse(['env', 'restart', '3800'])
+    self.assertFalse(args.recreate)
+    self.assertIsNone(args.image)
+    self.assertFalse(args.interactive)
+
+  def test_restart_recreate_with_image(self):
+    args = self._parse(
+        ['env', 'restart', '3800', '--recreate', '--image', 'custom:v2']
+    )
+    self.assertTrue(args.recreate)
+    self.assertEqual(args.image, 'custom:v2')
+
+  def test_in_place_restart_calls_new_api(self):
+    args = self._parse(['env', 'restart', '3800'])
+    with mock.patch.object(env.console, 'print'), \
+        mock.patch.object(
+            env.api, 'restart_server_in_container', return_value=True
+        ) as in_place, \
+        mock.patch.object(env.api, 'restart_container') as recreate:
+      env.execute(args)
+    in_place.assert_called_once_with('aw_3800')
+    recreate.assert_not_called()
+
+  def test_recreate_calls_legacy_api(self):
+    args = self._parse(['env', 'restart', '3800', '--recreate'])
+    with mock.patch.object(env.console, 'print'), \
+        mock.patch.object(
+            env.api, 'restart_container', return_value=['docker', 'run']
+        ) as recreate, \
+        mock.patch.object(env.api, 'restart_server_in_container') as in_place:
+      env.execute(args)
+    recreate.assert_called_once_with('aw_3800', image=None)
+    in_place.assert_not_called()
+
+
 if __name__ == '__main__':
   absltest.main()

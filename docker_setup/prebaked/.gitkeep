@@ -1,0 +1,3 @@
+# Placeholder: docker_setup/bake_avd.sh writes the baked AVD, .ini, APK cache
+# and adb keys here. Those artifacts are gitignored (large binaries); only
+# this placeholder and SHA256SUMS are versioned.

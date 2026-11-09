@@ -19,3 +19,6 @@ pytest
 requests
 tenacity
 termcolor
+fastapi
+uvicorn
+rich

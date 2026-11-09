@@ -66,5 +66,28 @@ class EnvLauncherTest(absltest.TestCase):
     mock_async_android_env.assert_called_with(mock_controller.return_value)
 
 
+class AppListTest(absltest.TestCase):
+
+  @mock.patch.object(env_launcher, "_increase_file_descriptor_limit")
+  @mock.patch.object(env_launcher.setup, "setup_apps")
+  def test_setup_env_forwards_empty_app_list(self, mock_setup_apps, unused_limit):
+    env = mock.create_autospec(interface.AsyncEnv)
+    env_launcher.setup_env(
+        env, emulator_setup=True, freeze_datetime=False, app_list=()
+    )
+    mock_setup_apps.assert_called_once_with(env, app_list=())
+
+  @mock.patch.object(env_launcher, "setup_env")
+  @mock.patch.object(env_launcher, "_get_env")
+  def test_load_and_setup_env_forwards_app_list(
+      self, mock_get_env, mock_setup_env
+  ):
+    env = mock.create_autospec(interface.AsyncEnv)
+    mock_get_env.return_value = env
+    result = env_launcher.load_and_setup_env(app_list=())
+    self.assertIs(result, env)
+    mock_setup_env.assert_called_once_with(env, False, True, app_list=())
+
+
 if __name__ == "__main__":
   absltest.main()

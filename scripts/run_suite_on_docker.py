@@ -19,7 +19,7 @@ Prerequisites (from the repository root):
   # Build the image and start a container on host port 5000:
   ./scripts/run_container.sh 5000
 
-  # ... wait for it to become healthy (5-10 minutes):
+  # ... wait for it to become healthy (~1-2 min prebaked, 5-10 min legacy):
   curl http://localhost:5000/health
 
 This script walks through the environment client's basic surface: health
@@ -29,8 +29,8 @@ running a whole eval suite with checkpointing and result summaries, use
 
 Note this script deliberately does NOT call client.close(): /close shuts down
 the environment inside the container without stopping the emulator, leaving
-the container unusable until it is restarted (./server/restart_aw.sh 5000,
-which itself needs 5-10 minutes).
+the container unusable until it is restarted. ./server/restart_aw.sh 5000
+restarts the server in place (seconds); use --recreate for a full recreate.
 """
 
 import time

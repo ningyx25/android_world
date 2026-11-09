@@ -331,11 +331,12 @@ def restart_container(
     name_prefix: str = constants.DEFAULT_NAME_PREFIX,
     detach: bool = True,
 ) -> list[str]:
-  """Recreates a container (``stop`` -> ``rm`` -> ``run``).
+  """Destroys and recreates a container (``stop`` -> ``rm`` -> ``run``).
 
-  The android_world server is PID 1 inside the container, so there is no child
-  server process to restart in place; a full recreate is the only option, as in
-  ``server/restart_aw.sh``. Returns the new ``docker run`` command executed.
+  This is the ``--recreate`` escape hatch, not the normal restart path. It
+  re-resolves the image tag and boots a fresh emulator. Prefer
+  :func:`restart_server_in_container` for an in-place, seconds-level restart.
+  Returns the new ``docker run`` command executed.
   """
   info = get_container_info(name, name_prefix)
   port = info.host_port if info and info.host_port else _port_from_name(
@@ -353,6 +354,40 @@ def restart_container(
   docker.docker_rm(name)
   docker.run_command(cmd)
   return cmd
+
+
+def restart_server_in_container(
+    name: str,
+    *,
+    name_prefix: str = constants.DEFAULT_NAME_PREFIX,
+    poll_timeout: float = 300.0,
+    poll_interval: float = 2.0,
+) -> bool:
+  """Restarts the server process in place, leaving QEMU/adb/app data intact.
+
+  ``docker_setup/entrypoint.sh`` supervises the server and spawns a fresh one
+  when the old process dies, so this only needs to kill it. Returns True when
+  ``/health`` answers 2xx again within ``poll_timeout``. This is the normal
+  restart path; a full recreate is only needed for a wedged container.
+  """
+  info = get_container_info(name, name_prefix)
+  port = info.host_port if info and info.host_port else _port_from_name(
+      name, name_prefix
+  )
+  if port is None:
+    raise ValueError(f'cannot determine host port for {name!r}')
+  # The bracketed pattern keeps pkill from matching the `docker exec` command
+  # line itself. 137/143 are accepted in case the exec'd shell is signalled.
+  docker.run_command(
+      ['docker', 'exec', name, 'pkill', '-f', 'server[.]android_server'],
+      allowed_exit_codes={0, 1, 137, 143},
+  )
+  deadline = time.monotonic() + poll_timeout
+  while time.monotonic() < deadline:
+    if probe_health(port):
+      return True
+    time.sleep(poll_interval)
+  return False
 
 
 def check_prerequisites(

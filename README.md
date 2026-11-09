@@ -137,11 +137,32 @@ ensure a consistent environment.
     ```bash
     python run_on_docker.py --suite_family android_world --tasks ClockStopWatchRunning
     ```
-    The container is left running when the run finishes; restart it explicitly
-    (it takes 5-10 minutes to boot) with:
+    The container is left running when the run finishes. To restart the server
+    in place (seconds; QEMU, adb and app data are untouched):
     ```bash
     ./server/restart_aw.sh 5000
     ```
+    Pass `--recreate` for a full container recreate (fresh emulator boot).
+
+### Faster startup with a prebaked image
+
+The default image builds an empty AVD, so a fresh container installs 24 apps
+(and downloads their APKs) on every boot, which takes 5-10 minutes. A
+prebaked image moves that work into the image build:
+
+```bash
+# One-time, on a KVM-capable host with GCS access (see script header):
+./docker_setup/bake_avd.sh          # writes docker_setup/prebaked/
+docker build -t android_world:fast .
+uv run aw env run --image android_world:fast --port 3800
+uv run aw env restart 3800 --image android_world:fast
+```
+
+**Do not overwrite `android_world:latest`.** Running containers resolve their
+image to an immutable ID at creation time, so rebuilding `latest` does not
+change them; but `restart_aw.sh --recreate` / `aw env restart --recreate`
+delete and recreate the container, which re-resolves the tag. Keep `latest`
+frozen and opt into the fast image explicitly with `--image`.
 
 ### Note for Apple Silicon users
 

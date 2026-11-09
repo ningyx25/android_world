@@ -82,12 +82,23 @@ def setup_env(
     env: interface.AsyncEnv,
     emulator_setup: bool = False,
     freeze_datetime: bool = True,
+    app_list: tuple | None = None,
 ) -> None:
-  """Performs environment setup and validation."""
+  """Performs environment setup and validation.
+
+  Args:
+    env: The Android environment.
+    emulator_setup: Perform first-time app setup on the environment if True.
+    freeze_datetime: Whether to freeze the datetime to a fixed time.
+    app_list: Apps to set up. ``None`` means all 24 apps; an empty tuple skips
+      the app loop entirely (prebaked images already ship the apps and their
+      data snapshots inside the AVD userdata). ``setup_apps`` still runs its
+      root/home-button preamble, which the a11y chain needs.
+  """
   _increase_file_descriptor_limit()
   if emulator_setup:
     logging.info('Setting up apps on the emulator.')
-    setup.setup_apps(env)
+    setup.setup_apps(env, app_list=app_list)
   if freeze_datetime:
     logging.info('Freezing datetime.')
     datetime_utils.setup_datetime(env.controller)
@@ -99,6 +110,7 @@ def load_and_setup_env(
     freeze_datetime: bool = True,
     adb_path: str = android_world_controller.DEFAULT_ADB_PATH,
     grpc_port: int = 8554,
+    app_list: tuple | None = None,
 ) -> interface.AsyncEnv:
   """Create environment with `get_env()` and perform env setup and validation.
 
@@ -118,10 +130,12 @@ def load_and_setup_env(
       2023, to ensure consistent benchmarking.
     adb_path: The location of the adb binary.
     grpc_port: The port for gRPC communication with the emulator.
+    app_list: Forwarded to ``setup_env``. Pass ``()`` on prebaked images to
+      skip the 24-app install loop; ``None`` keeps the legacy full setup.
 
   Returns:
     An interactable Android environment.
   """
   env = _get_env(console_port, adb_path, grpc_port)
-  setup_env(env, emulator_setup, freeze_datetime)
+  setup_env(env, emulator_setup, freeze_datetime, app_list=app_list)
   return env

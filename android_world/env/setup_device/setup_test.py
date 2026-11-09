@@ -145,5 +145,24 @@ class InstallApksTest(absltest.TestCase):
     self.mockdownload_and_install_apk.assert_has_calls(expected_calls)
 
 
+class SetupAppsSkipTest(absltest.TestCase):
+  """A prebaked image passes app_list=() to skip the 24-app install loop."""
+
+  @mock.patch.object(setup.adb_utils, "set_root_if_needed")
+  @mock.patch.object(setup.adb_utils, "press_home_button")
+  @mock.patch.object(setup, "download_and_install_apk")
+  @mock.patch.object(app_snapshot, "save_snapshot")
+  def test_empty_app_list_skips_install_loop(
+      self, mock_save, mock_install, mock_home, mock_root
+  ):
+    env = mock.create_autospec(interface.AsyncEnv)
+    setup.setup_apps(env, app_list=())
+    # The root/home-button preamble still runs (the a11y chain needs it).
+    mock_home.assert_called_once()
+    mock_root.assert_called_once()
+    mock_install.assert_not_called()
+    mock_save.assert_not_called()
+
+
 if __name__ == "__main__":
   absltest.main()

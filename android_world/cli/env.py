@@ -181,7 +181,16 @@ def configure_parser(subparsers: argparse._SubParsersAction) -> None:
   )
   restart_parser.add_argument(
       '-i', '--interactive', action='store_true',
-      help='Show the docker commands used for the recreate',
+      help='Show the docker exec command used for the in-place restart',
+  )
+  restart_parser.add_argument(
+      '--image', default=None,
+      help='Image for a --recreate restart (default: current image / '
+           'android_world:latest)',
+  )
+  restart_parser.add_argument(
+      '--recreate', action='store_true',
+      help='Destroy and recreate the container instead of restarting in place',
   )
   _add_common_options(restart_parser, prefix=True)
 
@@ -407,19 +416,36 @@ def _info(args: argparse.Namespace) -> None:
 
 def _restart(args: argparse.Namespace) -> None:
   name = api.resolve_name(args.container_name, args.name_prefix)
+  if args.recreate:
+    image = args.image or constants.DEFAULT_IMAGE
+    console.print(Panel(
+        f'[bold yellow]This STOPS and REMOVES {_esc(name)} and recreates it '
+        f'from {_esc(image)}. The emulator boots fresh (minutes).[/bold yellow]',
+        title='Recreate warning',
+    ))
+    cmd = api.restart_container(name, image=args.image)
+    console.print(f'[green]recreated {_esc(name)}[/green]')
+    console.print(f'[dim]{_esc(shlex.join(cmd))}[/dim]')
+    return
+
   console.print(Panel(
-      f'[bold yellow]This STOPS and REMOVES {_esc(name)} and recreates it. '
-      'The Android emulator reboots (≈5–10 minutes).[/bold yellow]',
-      title='Restart warning',
+      f'[bold cyan]Restarting the server inside {_esc(name)} in place. '
+      'QEMU, adb and app data are untouched (seconds).[/bold cyan]',
+      title='In-place restart',
   ))
   if args.interactive:
     console.print(
-        '[dim]docker stop → docker rm → docker run (--init --privileged)  '
-        '[/dim]'
+        "[dim]docker exec <name> pkill -f 'server[.]android_server'  "
+        '→ supervisor respawns the server[/dim]'
     )
-  cmd = api.restart_container(name)
-  console.print(f'[green]recreated {_esc(name)}[/green]')
-  console.print(f'[dim]{_esc(shlex.join(cmd))}[/dim]')
+  if api.restart_server_in_container(name):
+    console.print(f'[green]server in {_esc(name)} is healthy again[/green]')
+  else:
+    console.print(
+        f'[red]server did not become healthy; check '
+        f'docker logs {_esc(name)}[/red]'
+    )
+    sys.exit(1)
 
 
 def _exec(args: argparse.Namespace) -> None:

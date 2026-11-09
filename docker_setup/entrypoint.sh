@@ -1,13 +1,12 @@
 #!/bin/bash
 
-# Start Emulator
-#============================================
-# Launches the emulator, then runs the FastAPI server in the foreground
-# (via exec, so signals reach it directly) while a watchdog monitors the
-# QEMU process in the background. If QEMU dies, the watchdog kills the
-# server so this entrypoint exits non-zero; combined with
-# `--restart unless-stopped` on the container this yields automatic
-# recovery instead of indefinite 500s (2026-08-23 host-OOM incident).
+# Starts the emulator, then supervises the FastAPI server in the background.
+#
+# The server is NOT the container's PID 1 any more: it is a child of this
+# supervisor, so `aw env restart` can replace it in place (seconds) without
+# touching QEMU/adb. Only the watchdog's death (= QEMU gone) tears the
+# container down, which lets `--restart unless-stopped` perform the full
+# recreate -- preserving the 2026-08-23 OOM-incident recovery semantics.
 
 set -u
 
@@ -18,20 +17,41 @@ if [ ${EMU_BOOT_EXIT} -ne 0 ]; then
   exit ${EMU_BOOT_EXIT}
 fi
 
-adb -s "$(adb devices | grep emulator | head -1 | cut -f1)" root
-ADB_ROOT_EXIT=$?
-if [ ${ADB_ROOT_EXIT} -ne 0 ]; then
-  echo "[entrypoint] adb root failed (exit ${ADB_ROOT_EXIT}); continuing anyway." >&2
-fi
+# A marker left behind by an interrupted emulator restart would keep the
+# watchdog silent forever; clear it on every boot.
+rm -f /tmp/.emulator_restart_in_progress
 
-# Watchdog: kills this script's python child (and thus the container) when
-# QEMU disappears. Note the server is exec'd below, so its PID is $$ of
-# this shell after exec -- captured here before exec.
-SERVER_PID=$$
+SERVER_LOG=/var/log/aw_server.log
+mkdir -p /var/log
+: > "${SERVER_LOG}"
+
+python3 -m server.android_server >> "${SERVER_LOG}" 2>&1 &
+SERVER_PID=$!
 export SERVER_PID
+
 ./docker_setup/watchdog.sh &
 WATCHDOG_PID=$!
-trap 'kill ${WATCHDOG_PID} 2>/dev/null || true' EXIT
 
-echo "[entrypoint] starting server (pid ${SERVER_PID}); watchdog pid ${WATCHDOG_PID}"
-exec python3 -m server.android_server
+cleanup() {
+  kill "$WATCHDOG_PID" "$SERVER_PID" 2>/dev/null || true
+}
+trap cleanup EXIT INT TERM
+
+echo "[entrypoint] server pid ${SERVER_PID}; watchdog pid ${WATCHDOG_PID}"
+
+# Deliberately do NOT include SERVER_PID in the loop condition (unlike
+# MobileWorld's supervisor): a crashed server is restarted here in place,
+# and `restart` only has to kill it. The watchdog is the sole liveness gate.
+while kill -0 "$WATCHDOG_PID" 2>/dev/null; do
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    wait "$SERVER_PID" 2>/dev/null || true
+    echo "[entrypoint] server exited; restarting it in place" >&2
+    python3 -m server.android_server >> "${SERVER_LOG}" 2>&1 &
+    SERVER_PID=$!
+    export SERVER_PID
+  fi
+  sleep 2
+done
+
+echo "[entrypoint] watchdog exited (QEMU gone); exiting for full recreate" >&2
+exit 1
