@@ -34,12 +34,16 @@ dependencies = [
     "termcolor",
     "fastapi",
     "uvicorn",
+    "rich",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest",
 ]
+
+[project.scripts]
+aw = "android_world.cli.main:main"
 
 # NOTE: Do NOT use automatic package discovery here.
 # The Dockerfile does `WORKDIR /` + `COPY . /`, so the project root inside the
@@ -64,6 +68,7 @@ packages = [
     "android_world.task_evals.single.calendar",
     "android_world.task_evals.utils",
     "android_world.utils",
+    "android_world.cli",
 ]
 
 [tool.setuptools.package-data]
