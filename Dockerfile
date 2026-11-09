@@ -102,41 +102,42 @@ COPY android_world/ /android_world/
 RUN uv pip install . --system
 
 #=========================
-# Copy the rest of the runtime code and scripts.
+# Copy runtime code EXPLICITLY. A blanket `COPY . /` would also pull in the
+# multi-GB baked AVD under docker_setup/prebaked/, duplicating it. The AVD is
+# copied exactly once, directly into QEMU's AVD home, below.
 #=========================
-COPY . /
+COPY apps/ /apps/
+COPY assets/ /assets/
+COPY docs/ /docs/
+COPY scripts/ /scripts/
+COPY server/ /server/
+COPY .github/ /.github/
+COPY docker_setup/*.sh /docker_setup/
+COPY *.py *.md *.toml *.txt LICENSE .pylintrc .gitignore .dockerignore Dockerfile /
 
-RUN chmod a+x docker_setup/start_emu.sh && \
-    chmod a+x docker_setup/start_emu_headless.sh && \
-    chmod a+x docker_setup/entrypoint.sh && \
-    chmod a+x docker_setup/watchdog.sh && \
-    chmod a+x docker_setup/bake_avd.sh
+RUN chmod a+x /docker_setup/*.sh
 
 #====================================
-# Prebaked AVD: installed apps, app data snapshots and (optionally) a QEMU
-# boot snapshot, generated out-of-band by docker_setup/bake_avd.sh. The
-# directory is an empty placeholder until that script is run; the image still
-# builds, and the server falls back to runtime setup_apps via
-# server/android_server.py:_verify_prebaked_snapshots if snapshots are absent.
+# Prebaked AVD: ONE copy, straight into /root/.android/avd -- the absolute
+# path baked into hardware-qemu.ini and Pixel_6_API_33.ini, so the AVD must
+# not be relocated afterwards. The directory-level COPY keeps the image
+# buildable when prebaked/ contains only .gitkeep (no AVD yet); in that case
+# the server falls back to runtime setup_apps via
+# server/android_server.py:_verify_prebaked_snapshots.
+# app_data and adbkey ride along in the same single copy; AW_APP_DATA_CACHE_DIR
+# points at it directly, so no further cp -a of large data is needed.
 #====================================
-COPY docker_setup/prebaked/ /opt/aw_prebaked/
-RUN mkdir -p /root/.android/avd && \
-    if [ -f /opt/aw_prebaked/adbkey ]; then \
-      cp /opt/aw_prebaked/adbkey /opt/aw_prebaked/adbkey.pub /root/.android/ ; \
-    fi && \
-    if [ -d /opt/aw_prebaked/app_data ]; then \
-      mkdir -p /opt/aw_cache && cp -a /opt/aw_prebaked/app_data /opt/aw_cache/ ; \
-    fi && \
-    if [ -d "/opt/aw_prebaked/${EMULATOR_NAME}.avd" ]; then \
-      cp -a "/opt/aw_prebaked/${EMULATOR_NAME}.avd" /root/.android/avd/ && \
-      cp -a "/opt/aw_prebaked/${EMULATOR_NAME}.ini" /root/.android/avd/ ; \
+COPY docker_setup/prebaked/ /root/.android/avd/
+RUN mkdir -p /root/.android && \
+    if [ -f /root/.android/avd/adbkey ]; then \
+      cp /root/.android/avd/adbkey /root/.android/avd/adbkey.pub /root/.android/ ; \
     fi
 
 # Prebaked images skip the 24-app install loop at runtime. Build with
 # --build-arg AW_PREBAKED=0 to keep the legacy cold-boot setup.
 ARG AW_PREBAKED=1
 ENV AW_PREBAKED=${AW_PREBAKED}
-ENV AW_APP_DATA_CACHE_DIR=/opt/aw_cache/app_data
+ENV AW_APP_DATA_CACHE_DIR=/root/.android/avd/app_data
 ENV AW_DEVICE_SERIAL=emulator-5554
 
 EXPOSE 5000

@@ -69,6 +69,34 @@ if ! docker exec "$CONTAINER_NAME" adb emu avd snapshot save aw_baked >/dev/null
   echo "[bake] WARNING: QEMU boot snapshot unsupported; the runtime will use the -no-snapshot cold-boot fallback" >&2
 fi
 
+# --- Shut QEMU down cleanly BEFORE copying --------------------------------
+# QEMU keeps appending to userdata-qemu.img.qcow2 while it runs. A live
+# docker cp truncates that file (the first bake produced 54 qcow2 errors and
+# a ~0.85MB short read). `adb emu kill` lets QEMU flush and close the image so
+# the export is self-consistent. docker cp also works on a stopped container,
+# so it is fine if the watchdog takes the container down afterwards.
+echo "[bake] stopping emulator cleanly (flush qcow2 before export)"
+if docker exec "$CONTAINER_NAME" adb -s emulator-5554 emu kill >/dev/null 2>&1; then
+  echo "[bake] emulator shutdown requested"
+else
+  echo "[bake] WARNING: 'adb emu kill' failed; waiting for QEMU to exit anyway" >&2
+fi
+
+qemu_gone=0
+for _ in $(seq 1 30); do
+  # Bracketed pattern avoids pgrep -f matching its own command line. If the
+  # container already stopped, docker exec fails -- that also means QEMU is gone.
+  if ! docker exec "$CONTAINER_NAME" pgrep -f '[q]emu-system-x86_64' >/dev/null 2>&1; then
+    qemu_gone=1
+    break
+  fi
+  sleep 1
+done
+if [ "$qemu_gone" = "0" ]; then
+  echo "[bake] WARNING: QEMU still running after 30s; exported image may be inconsistent" >&2
+fi
+sleep 2
+
 # --- Export userdata, APK cache and adb keys ------------------------------
 echo "[bake] exporting ${AVD_NAME}.avd and .ini"
 docker cp "${CONTAINER_NAME}:/root/.android/avd/${AVD_NAME}.avd" "${OUT_DIR}/"
@@ -79,6 +107,31 @@ docker cp "${CONTAINER_NAME}:/root/.android/avd/${AVD_NAME}.ini" "${OUT_DIR}/"
 docker cp "${CONTAINER_NAME}:/tmp/android_world/app_data" "${OUT_DIR}/" 2>/dev/null || true
 docker cp "${CONTAINER_NAME}:/root/.android/adbkey" "${OUT_DIR}/" 2>/dev/null || true
 docker cp "${CONTAINER_NAME}:/root/.android/adbkey.pub" "${OUT_DIR}/" 2>/dev/null || true
+
+# Runtime lock files are meaningless once QEMU is gone; drop them so the
+# baked AVD does not look "in use" on its first start.
+rm -f "${OUT_DIR}/${AVD_NAME}.avd/"*.lock
+
+# --- Integrity self-check -------------------------------------------------
+# A truncated qcow2 still starts (corrupt: false) but corrupts further writes,
+# so fail loudly here instead of shipping a broken benchmark initial state.
+if command -v qemu-img >/dev/null 2>&1; then
+  qcow2="${OUT_DIR}/${AVD_NAME}.avd/userdata-qemu.img.qcow2"
+  if [ ! -f "$qcow2" ]; then
+    echo "[bake] ERROR: expected qcow2 not found at ${qcow2}" >&2
+    exit 1
+  fi
+  check_output=$(qemu-img check "$qcow2" 2>&1 || true)
+  if grep -qE '[1-9][0-9]* errors were found' <<< "$check_output"; then
+    echo "[bake] ERROR: baked qcow2 failed its integrity check:" >&2
+    echo "$check_output" | tail -6 >&2
+    echo "[bake] Do NOT build from this output; re-run bake_avd.sh." >&2
+    exit 1
+  fi
+  echo "[bake] qcow2 integrity check passed"
+else
+  echo "[bake] WARNING: qemu-img not installed; skipping integrity check" >&2
+fi
 
 # Reproducibility: commit only the script + this checksum, never the .avd.
 (cd "$OUT_DIR" && find . -type f ! -name 'SHA256SUMS' ! -name '.gitkeep' \
